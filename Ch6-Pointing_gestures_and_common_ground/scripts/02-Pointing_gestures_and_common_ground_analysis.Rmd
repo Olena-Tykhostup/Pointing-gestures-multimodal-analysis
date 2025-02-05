@@ -1,0 +1,563 @@
+---
+title: "02-Pointing_gestures_and_common_ground_logistic_regression"
+author: "Olena Tykhostup"
+date: "2022-01-29"
+output: html_document
+---
+This is the code used for data analysis reported in Chapter 6 of the dissertation titled ‘Multimodal Annotation and Analysis of a Narrative Problem-Solving Task in English, Idi, and Russian’. This script is sequence of statistical analyses and visualizations focusing on pointing gesture phases (sroke and hold), effort (contact and no contact with the target during the pointing ggesture), and hand shape (open palm and index finger) in pointing gestures, across three languages (English, Russian, and Idi) on the one hand, and the annotations of information status of co-produced spoken expressions, on the other. Specifically, this code runs a series of logistic regression models. It includes model fitting with both fixed effects and random intercepts for speakers, model comparisons to determine the best fit, and visualizations of predicted probabilities. 
+
+## Load the packages
+```{r, warning=F, message=F}
+library(here)
+library(lubridate)
+library(ggplot2)
+library(tidyverse)
+library(sjPlot) # for tab_model and plot_model functions
+library(lme4)
+library(ggeffects)
+library(gtable)
+library(performance)
+```
+## Define the color palette
+```{r}
+customColors <- c("#183A5A", "#EFB758", "#C34129", "#E2DBC9")
+```
+## Load the data
+English, Idi, Russian data samples, both experiment phases.
+```{r load}
+pointCommonGroundData <- read.csv(here("data", "FPPT-EIR-Full-Annotations.csv"))
+```
+## Prepare the data for analysis
+```{r, warning=F, message=F}
+cleanDataForAnalysis <- pointCommonGroundData %>%
+  mutate_at(vars(begin, end), ~ as.POSIXct(., format = "%Y-%m-%dT%H:%M:%SZ")) %>% # transform time columns to POSIXct
+  mutate_at(vars(speaker, trial, affil, infstat, shape, effort, traj, orient, target, cards, lang, phase),funs(factor(.))) %>% # transform all columns into factors (card stays character)
+  mutate(affwords = str_count(coart, fixed(".")),
+         affwords = as.integer(affwords + 1))  # a column that contains number of words in affiliate
+```
+## Inspect the df
+```{r}
+str(cleanDataForAnalysis)
+summary(cleanDataForAnalysis)
+sum(is.na(cleanDataForAnalysis))
+```
+## Binomial Logistic Regression for gesture phase
+## English Gesture Phase df 
+## gesture either contains a hold phase "H" or only a stroke phase "S" 
+```{r}
+phaseDataEng <- cleanDataForAnalysis %>%
+  filter(infstat!= "other") %>%
+  filter(lang=="eng") %>%
+  select(speaker, phase, infstat)
+```
+## Fixed-effects minimal base-line model vs a base-line mixed-model using the glmer function with a random intercept for speaker
+AIC of the glmer model is smaller than the AIC of the glm model, indicating that including random intercepts is justified.
+```{r}
+# baseline model glm
+baseModelPhaseEng <- glm(phase ~ 1, family = binomial, data = phaseDataEng) 
+# base-line mixed-model
+mixedModelPhaseSpeakerEng <- glmer(phase ~ (1|speaker), data = phaseDataEng, family = binomial())
+
+AIC(baseModelPhaseEng, mixedModelPhaseSpeakerEng)
+```
+## Model and summary English gesture phase
+```{r}
+mixedModelPhaseInfStatusSpeakerEng <- glmer(phase ~ infstat + (1|speaker), data = phaseDataEng, family = binomial())
+
+summary(mixedModelPhaseInfStatusSpeakerEng)
+sjPlot::tab_model(mixedModelPhaseInfStatusSpeakerEng) 
+```
+## Compare to 0 model
+```{r}
+anova(mixedModelPhaseInfStatusSpeakerEng, mixedModelPhaseSpeakerEng, test = "Chi") 
+```
+## Visualize effects and run diagnostics
+```{r}
+# Predicted probabilities of poinitng gesture not including the hold phase
+plot_model(mixedModelPhaseInfStatusSpeakerEng, type = "pred", terms = "infstat")
+
+# the predicted values against the residuals
+plot(mixedModelPhaseInfStatusSpeakerEng, pch = 20, col = "black", lty = "dotted")
+```
+
+## Russian poinitng gesture phase df
+```{r}
+phaseDataRus <- cleanDataForAnalysis %>%
+  filter(infstat!= "other") %>%
+  filter(lang=="rus") %>%
+  select(speaker, phase, infstat)
+```
+## Fixed-effects minimal base-line model vs a base-line mixed-model using the glmer function with a random intercept for speaker
+AIC of the glmer model is smaller than the AIC of the glm model, indicating that including random intercepts is justified.
+```{r}
+# baseline model glm
+baseModelPhaseRus <- glm(phase ~ 1, family = binomial, data = phaseDataRus) 
+# base-line mixed-model
+mixedModelPhaseSpeakerRus <- glmer(phase ~ (1|speaker), data = phaseDataRus, family = binomial())
+
+AIC(baseModelPhaseRus, mixedModelPhaseSpeakerRus)
+```
+## Model and summary Russian gesture phase
+```{r}
+mixedModelPhaseInfStatusSpeakerRus <- glmer(phase ~ infstat + (1|speaker), data = phaseDataRus, family = binomial())
+levels(phaseDataRus$phase)
+summary(mixedModelPhaseInfStatusSpeakerRus)
+
+sjPlot::tab_model(mixedModelPhaseInfStatusSpeakerRus) 
+```
+## Subset and fit Idi model for pointing gesture phase
+```{r}
+phaseDataIdi <- cleanDataForAnalysis %>%
+  filter(lang=="idi") %>%
+  filter(infstat!="other")
+
+modelPhaseInfStatIdi <- glm(phase ~ infstat, data = phaseDataIdi, family = "binomial")
+
+summary(modelPhaseInfStatIdi)
+sjPlot::tab_model(modelPhaseInfStatIdi) 
+
+plot_model(modelPhaseInfStatIdi, type = "pred", terms = "infstat")
+plot(residuals(modelPhaseInfStatIdi, type = "response"))
+
+```
+## Make ggplot for pointing gesture phase with all three models
+```{r}
+plotModelPhaseIdi <- ggpredict(modelPhaseInfStatIdi, "infstat") %>% as.data.frame()
+plotModelPhaseEng <- ggpredict(mixedModelPhaseInfStatusSpeakerEng, "infstat") %>% as.data.frame()
+plotModelPhaseRus <- ggpredict(mixedModelPhaseInfStatusSpeakerRus, "infstat")%>% as.data.frame()
+
+plotPredProbPhaseEngIdiRus <- ggplot(plotModelPhaseEng, aes(x, predicted)) +
+  geom_errorbar(aes(ymin=conf.low, ymax=conf.high, color="#183A5A"), width=.1, alpha = 0.8,  position = position_nudge(x = -0.1)) + # English errorbar
+  geom_point(aes(color="#183A5A"), size = 3, alpha = 0.8,  position = position_nudge(x = -0.1)) + # blue color
+  geom_errorbar(data=plotModelPhaseRus, aes(ymin=conf.low, ymax=conf.high, color="#EFB758"), width=.1, alpha = 0.8,  position = position_nudge(x = 0.1)) + # Russian errorbar
+  geom_point(data=plotModelPhaseRus, aes(colour = "#EFB758"), size = 3, alpha = 0.8, position = position_nudge(x = 0.1)) + # yellow color
+  geom_errorbar(data=plotModelPhaseIdi, aes(ymin=conf.low, ymax=conf.high, color="#C34129"), width=.1, alpha = 0.8) + # Idi errorbar
+  geom_point(data=plotModelPhaseIdi, aes(colour = "#C34129"), size = 3, alpha = 0.8) + # red color
+  coord_cartesian(ylim=c(0, 1)) +
+  theme_minimal() +
+  labs(x="", y="Predicted probabilities of no hold", title = "") +
+  scale_color_identity(name = "Languages:",
+                       breaks = c("#183A5A", "#C34129", "#EFB758"),
+                       labels = c("English", "Idi", "Russian"),
+                       guide = "legend") +
+  theme(axis.title = element_text(size=12),
+        axis.title.y = element_text(vjust=3),
+        axis.text = element_text(size=12),
+        plot.title = element_text(size=12, hjust = 0.5),
+        legend.text = element_text(size=12),
+        legend.title = element_text(size=12),
+        legend.position = "none") +
+  guides(color = guide_legend(ncol = 3))
+
+plotPredProbPhaseEngIdiRusLegend <- plotPredProbPhaseEngIdiRus +
+  theme(legend.position = "bottom")
+
+# Render the plot and extract the legend
+plotPredProbPhaseEngIdiRusBuild <- ggplot_build(plotPredProbPhaseEngIdiRusLegend)
+predProbPhaseEngIdiRusGtable <- ggplot_gtable(plotPredProbPhaseEngIdiRusBuild)
+legendPhaseEngIdiRus <- gtable_filter(predProbPhaseEngIdiRusGtable, "guide-box")
+
+plotPredProbPhaseEngIdiRus
+```
+## Save as figures
+```{r}
+# Save the legend as a PDF
+ggsave(here("figures", "FPPT-Point-legend-thee-lang.pdf"), plot = legendPhaseEngIdiRus, width = 5, height = 0.5, units = "in")
+
+# Save figure as PNG
+png(here("figures", "FPPT-Point-phase-thee-lang.png"),  width = 7.5, height = 9, units = "cm", res = 500)
+plotPredProbPhaseEngIdiRus
+dev.off()
+
+# as PDF
+pdf(here("figures", "FPPT-Point-phase-thee-lang.pdf"),  width = 3.5, height = 4)
+plotPredProbPhaseEngIdiRus
+dev.off()
+```
+## Regression modelling for effort
+Effort is operationalized as contact of the pointing gesture with the target or absence of contact ("contact" and "nocontact")
+## Subset English data for effort variable (contact vs no contact)
+```{r}
+effortDataEng <- cleanDataForAnalysis %>%
+  filter(infstat!= "other") %>%
+  filter(lang=="eng") %>%
+  select(speaker, effort, infstat)
+```
+## Fixed-effects minimal base-line model vs a base-line mixed-model using the glmer function with a random intercept for speaker
+AIC of the glmer model is smaller than the AIC of the glm model, indicating that including random intercepts is justified.
+```{r}
+# baseline model glm
+baseModelEffortEng <- glm(effort ~ 1, family = binomial, data = effortDataEng) 
+# base-line mixed-model
+mixeModelEffortSpeakerEng <- glmer(effort ~ (1|speaker), data = effortDataEng, family = binomial())
+
+AIC(baseModelEffortEng, mixeModelEffortSpeakerEng)
+```
+## Model and summary
+```{r}
+mixeModelEffortInfStatSpeakerEng <- glmer(effort ~ infstat + (1|speaker), data = effortDataEng, family = binomial())
+
+summary(mixeModelEffortInfStatSpeakerEng)
+sjPlot::tab_model(mixeModelEffortInfStatSpeakerEng)
+```
+## Compare to other models
+There a better fit of the more complex model (with information status) compared to the ssimpler model (without it).
+```{r}
+anova(mixeModelEffortInfStatSpeakerEng, mixeModelEffortSpeakerEng, test="Chi")
+compare_performance(mixeModelEffortSpeakerEng, mixeModelEffortInfStatSpeakerEng)
+```
+## Visualize effects and run diagnostics
+```{r}
+# Predicted probabilities of poinitng gesture not including the hold phase
+plot_model(mixeModelEffortInfStatSpeakerEng, type = "pred", terms = "infstat")
+
+# the predicted values against the residuals
+plot(mixeModelEffortInfStatSpeakerEng, pch = 20, col = "black", lty = "dotted")
+```
+
+## Subset Russian data for effort variable (contact vs no contact)
+```{r}
+effortDataRus <- cleanDataForAnalysis %>%
+  filter(infstat!= "other") %>%
+  filter(lang=="rus") %>%
+  select(speaker, effort, infstat)
+```
+## Fixed-effects minimal base-line model vs a base-line mixed-model using the glmer function with a random intercept for speaker
+AIC of the glmer model is smaller than the AIC of the glm model, indicating that including random intercepts is justified.
+```{r}
+# baseline model glm
+baseModelEffortRus <- glm(effort ~ 1, family = binomial, data = effortDataRus) 
+# base-line mixed-model
+mixedModelEffortSpeakerRus <- glmer(effort ~ (1|speaker), data = effortDataRus, family = binomial())
+
+AIC(baseModelEffortRus, mixedModelEffortSpeakerRus)
+```
+## Model and summary
+```{r}
+mixedModelEffortInfStatusSpeakerRus <- glmer(effort ~ infstat + (1|speaker), data = effortDataRus, family = binomial())
+
+summary(mixedModelEffortInfStatusSpeakerRus)
+sjPlot::tab_model(mixedModelEffortInfStatusSpeakerRus) 
+```
+## Compare to 0 model
+```{r}
+anova(mixedModelEffortInfStatusSpeakerRus, mixedModelEffortSpeakerRus, test = "Chi") 
+```
+## Visualize effects and run diagnostics
+```{r}
+# Predicted probabilities of poinitng gesture not touching the target
+plot_model(mixedModelEffortInfStatusSpeakerRus, type = "pred", terms = "infstat")
+
+# the predicted values against the residuals
+plot(mixedModelEffortInfStatusSpeakerRus, pch = 20, col = "black", lty = "dotted")
+```
+## Subset and fit Idi model for pointing gesture effort
+```{r}
+modelEffortInfStatIdi <- glm(effort ~ infstat, data = phaseDataIdi, family = "binomial")
+
+summary(modelEffortInfStatIdi)
+sjPlot::tab_model(modelEffortInfStatIdi) 
+
+plot(residuals(modelEffortInfStatIdi, type = "response"))
+plot_model(modelEffortInfStatIdi, type = "pred", terms = "infstat")
+```
+## Regression modelling for hand shape
+Two hand shapes are of interest, open palm pointing gestures and index finger pointing gestures
+## Subset English data for hand shape variable (index or palm)
+```{r}
+shapeDataEng <- cleanDataForAnalysis %>%
+  filter(infstat!= "other") %>%
+  filter(lang=="eng") %>%
+  filter(shape!="other") %>%
+  select(speaker, shape, infstat)
+```
+## Fixed-effects minimal base-line model vs a base-line mixed-model using the glmer function with a random intercept for speaker
+AIC of the glmer model is smaller than the AIC of the glm model, indicating that including random intercepts is justified.
+```{r}
+# baseline model glm
+baseModelShapeEng <- glm(shape ~ 1, family = binomial, data = shapeDataEng) 
+# base-line mixed-model
+mixedModelShapeSpeakerEng <- glmer(shape ~ (1|speaker), data = shapeDataEng, family = binomial())
+
+AIC(baseModelShapeEng, mixedModelShapeSpeakerEng)
+```
+## Model and summary
+```{r}
+mixedModelShapeInfStatusEng <- glmer(shape ~ infstat + (1|speaker), data = shapeDataEng, family = binomial())
+summary(mixedModelShapeInfStatusEng)
+
+sjPlot::tab_model(mixedModelShapeInfStatusEng) 
+```
+
+### Check for overdispersion (Pearson residuals)
+Overdispersion is < 1
+```{r}
+rdev <- sum(residuals(mixedModelShapeInfStatusEng)^2) 
+mdf <- length(fixef(mixedModelShapeInfStatusEng))
+rdf <- nrow(shapeDataEng)-mdf  ## residual df [NOT accounting for random effects] 
+rdev/rdf
+
+# Significance test
+prob.disp <- pchisq(rdev, rdf, lower.tail=FALSE, log.p=TRUE)
+
+plot(fitted(mixedModelShapeInfStatusEng), residuals(mixedModelShapeInfStatusEng))
+```
+## Subset Russian data for hand shape variable (index or palm)
+```{r}
+shapeDataRus <- cleanDataForAnalysis %>%
+  filter(infstat!= "other") %>%
+  filter(lang=="rus") %>%
+  filter(shape!="other") %>%
+  filter(speaker!="FPPTRR105") %>%
+  select(speaker, shape, infstat)
+```
+## Fixed-effects minimal base-line model vs a base-line mixed-model using the glmer function with a random intercept for speaker
+AIC of the glmer model is smaller than the AIC of the glm model, indicating that including random intercepts is justified.
+```{r}
+# baseline model glm
+baseModelShapeRus <- glm(shape ~ 1, family = binomial, data = shapeDataRus) 
+# base-line mixed-model
+mixedModelShapeSpeakerRus <- glmer(shape ~ (1|speaker), data = shapeDataRus, family = binomial())
+
+AIC(baseModelShapeRus, mixedModelShapeSpeakerRus)
+
+```
+## Model and summary
+```{r}
+mixedModelShapeInfStatusSpeakerRus <- glmer(shape ~ infstat + (1|speaker), data = shapeDataRus, family = binomial())
+
+# Extract the variance-covariance matrix of the random effects
+VarCorr_matrix <- VarCorr(mixedModelEffortInfStatusSpeakerRus)
+
+# The residual variance is typically the value associated with the residual term
+sigma_squared <- attr(VarCorr_matrix, "sc")^2
+
+summary(mixedModelShapeInfStatusSpeakerRus)
+
+sjPlot::tab_model(mixedModelShapeInfStatusSpeakerRus) 
+```
+## Subset and fit Idi model for pointing gesture hand shape
+```{r}
+modelShapeInfStatusIdi <- glm(shape ~ infstat, data = phaseDataIdi, family = "binomial")
+
+summary(modelShapeInfStatusIdi)
+sjPlot::tab_model(modelShapeInfStatusIdi) 
+
+plot_model(modelShapeInfStatusIdi, type = "pred", terms = "infstat")
+```
+## Make predicted probabilty plot for hand shape 
+## (index finger versus open palm poitnign gesture) in all three languages
+```{r}
+plotModelShapeIdi <- ggpredict(modelShapeInfStatusIdi, "infstat") %>% as.data.frame()
+plotModelShapeEng <- ggpredict(mixedModelShapeInfStatusEng, "infstat") %>% as.data.frame()
+plotModelShapeRus <- ggpredict(mixedModelShapeInfStatusSpeakerRus, "infstat")%>% as.data.frame()
+
+plotPredProbShapeEngIdiRus <- ggplot(plotModelShapeEng, aes(x, predicted)) +
+  geom_errorbar(aes(ymin=conf.low, ymax=conf.high, color="#183A5A"), width=.1, alpha = 0.8,  position = position_nudge(x = -0.1)) + # English errorbar
+  geom_point(aes(color="#183A5A"), size = 3, alpha = 0.8,  position = position_nudge(x = -0.1)) + # blue color
+  geom_errorbar(data=plotModelShapeRus, aes(ymin=conf.low, ymax=conf.high, color="#EFB758"), width=.1, alpha = 0.8,  position = position_nudge(x = 0.1)) + # Russian errorbar
+  geom_point(data=plotModelShapeRus, aes(colour = "#EFB758"), size = 3, alpha = 0.8, position = position_nudge(x = 0.1)) + # yellow color
+  geom_errorbar(data=plotModelShapeIdi, aes(ymin=conf.low, ymax=conf.high, color="#C34129"), width=.1, alpha = 0.8) + # Idi errorbar
+  geom_point(data=plotModelShapeIdi, aes(colour = "#C34129"), size = 3, alpha = 0.8) + # red color
+  coord_cartesian(ylim=c(0, 1)) +
+  theme_minimal() +
+  labs(x="", y="Predicted probabilities of open palm", title = "") +
+  scale_color_identity(name = "Languages:",
+                          breaks = c("#183A5A", "#C34129", "#EFB758"),
+                          labels = c("English", "Idi", "Russian"),
+                          guide = "legend")  +
+  theme(axis.title = element_text(size=12),
+        axis.title.y = element_text(vjust=3),
+        axis.text = element_text(size=12),
+        plot.title = element_text(size=12, hjust = 0.5),
+        legend.text = element_text(size=12),
+        legend.title = element_text(size=12),
+        aspect.ratio = 2/2, 
+        legend.position = "none")
+
+plotPredProbShapeEngIdiRus
+```
+## Save figures for hand shape
+```{r}
+png(here("figures", "FPPT-Point-shape-thee-lang.png"), width = 7.5, height = 9, units = "cm", res = 500)
+plotPredProbShapeEngIdiRus
+dev.off()
+
+pdf(here("figures", "FPPT-Point-shape-thee-lang.pdf"),  width = 3.5, height = 4)
+plotPredProbShapeEngIdiRus
+dev.off()
+
+```
+## Make predicted probabilty plot for effort
+## (contact with the target during the pointing gesture or absence of contact) 
+## in all three languages
+```{r}
+plotModelEffortIdi <- ggpredict(modelEffortInfStatIdi, "infstat") %>% as.data.frame()
+plotModelEffortEng <- ggpredict(mixeModelEffortInfStatSpeakerEng, "infstat") %>% as.data.frame()
+plotModelEffortRus <- ggpredict(mixedModelEffortInfStatusSpeakerRus, "infstat")%>% as.data.frame()
+
+plotPredProbEffortEngIdiRus <- ggplot(plotModelEffortEng, aes(x, predicted)) +
+  geom_errorbar(aes(ymin=conf.low, ymax=conf.high, color="#183A5A"), width=.1, alpha = 0.8,  position = position_nudge(x = -0.1)) + # English errorbar
+  geom_point(aes(color="#183A5A"), size = 3, alpha = 0.8,  position = position_nudge(x = -0.1)) + # blue color
+  geom_errorbar(data=plotModelEffortRus, aes(ymin=conf.low, ymax=conf.high, color="#EFB758"), width=.1, alpha = 0.8,  position = position_nudge(x = 0.1)) + # Russian errorbar
+  geom_point(data=plotModelEffortRus, aes(colour = "#EFB758"), size = 3, alpha = 0.8, position = position_nudge(x = 0.1)) + # yellow color
+  geom_errorbar(data=plotModelEffortIdi, aes(ymin=conf.low, ymax=conf.high, color="#C34129"), width=.1, alpha = 0.8) + # Idi errorbar
+  geom_point(data=plotModelEffortIdi, aes(colour = "#C34129"), size = 3, alpha = 0.8) + # red color
+  coord_cartesian(ylim=c(0, 1)) +
+  theme_minimal() +
+  theme(aspect.ratio = 2/2) +
+  labs(y="Predicted probabilities of no contact", x="", title = "") +
+  scale_color_identity(name = "Languages:",
+                          breaks = c("#183A5A", "#C34129", "#EFB758"),
+                          labels = c("English", "Idi", "Russian"),
+                          guide = "legend")  +
+  theme(axis.title = element_text(size=12),
+        axis.title.y = element_text(vjust=3),
+        axis.text = element_text(size=12),
+        plot.title = element_text(size=12, hjust = 0.5),
+        legend.text = element_text(size=12),
+        legend.title = element_text(size=12),
+        aspect.ratio = 2/2, 
+        legend.position = "none")
+
+plotPredProbEffortEngIdiRus
+```
+## Save figures for contact
+```{r}
+png(here("figures", "FPPT-Point-cont-thee-lang.png"), width = 10, height = 9, units = "cm", res = 500)
+plotPredProbEffortEngIdiRus
+dev.off()
+
+pdf(here("figures", "FPPT-Point-cont-thee-lang.pdf"),  width = 3.5, height = 4)
+plotPredProbEffortEngIdiRus
+dev.off()
+```
+## Pointing gesture rates and common ground
+## Load and clean the human referents data
+```{r load and clean}
+rawHumanReferentsData <- read.csv(here("data", "FPPT-ER-HumRef-Annotations.csv"), na.strings=c(""," ","NA", "na"))
+
+cleanDataHumanReferentsEngRus <- rawHumanReferentsData %>%
+  select(2,9:10) %>%
+  mutate_all(function(x)gsub('\\s+', '', x)) %>% #remove all spaces in the df
+  separate(V9, c("pp", "new", "point"), "-") %>% #separate Point_form into 4 columns
+  rename(speaker = V2, reference = pp, infstat = new, trial = V10) %>% #rename all columns
+  mutate(lang = case_when(str_detect(trial,"-ENG-") ~ "eng",
+                         str_detect(trial, "-RUS-") ~ "rus",
+                        TRUE ~ "idi")) %>% # create a column for language based on file name
+  select(1:4,6) %>%
+  mutate_if(is.character,as.factor) %>%
+  arrange(lang, speaker) %>%
+  drop_na()
+```
+## Inspect the human referents data
+```{r}
+str(cleanDataHumanReferentsEngRus)
+summary(cleanDataHumanReferentsEngRus)
+```
+## Generate and explore English df
+```{r}
+dataHumanReferentsEng <- cleanDataHumanReferentsEngRus %>%
+  filter(lang=="eng", reference!="pro")
+
+table(dataHumanReferentsEng$reference,dataHumanReferentsEng$infstat)
+ggplot(dataHumanReferentsEng, aes(x = reference, fill = infstat)) + geom_bar(position = "fill")
+```
+## English model for poinitng gesture occurence
+The model with interaction has lower AIC and BIC values and the R² values (both conditional and marginal) are higher for model with interaction, indicating it explains more variance than the model without.
+```{r, warning=F, message=F}
+# Model for poiting occurence based on referring expression only
+mixedModelPointRefExprEng <- glmer(point ~ reference + (1 | speaker), data =dataHumanReferentsEng, family = "binomial")
+
+# Simple model without interaction with reffering expression and information status
+mixedModelPointRefExprInfStatEng <- glmer(point ~ reference + infstat + (1 | speaker), data =dataHumanReferentsEng, family = "binomial")
+
+# Model with interaction
+mixedModelPointInteractionEng <- glmer(point ~ reference + infstat * reference + (1 | speaker), data =dataHumanReferentsEng, family = "binomial")
+
+compare_performance(mixedModelPointRefExprEng, mixedModelPointInteractionEng)
+anova(mixedModelPointRefExprInfStatEng, mixedModelPointInteractionEng)
+
+summary(mixedModelPointInteractionEng)
+plot(resid(mixedModelPointInteractionEng))
+```
+
+```{r}
+# Manually check for convergence issues
+mixedModelPointInteractionEng@optinfo$conv
+```
+## Russian subset for human referents and pointing gestures
+```{r, warning=F, message=F}
+dataHumanReferentsRus <- cleanDataHumanReferentsEngRus %>%
+  filter(lang=="rus", reference!="pro")
+```
+## Russian model for poinitng gesture occurence
+```{r}
+# Model for poiting occurence based on referring expression only
+mixedModelPointRefExprRus <- glmer(point ~ reference + (1 | speaker), data =dataHumanReferentsRus, family = "binomial")
+
+# Simple model without interaction
+mixedModelPointRefExprInfStatRus <- glmer(point ~ reference + infstat + (1 | speaker), data =dataHumanReferentsRus, family = "binomial")
+
+# Model with interaction
+mixedModelPointInteractionRus <- glmer(point ~ reference + infstat * reference + (1 | speaker), data =dataHumanReferentsRus, family = "binomial")
+
+summary(mixedModelPointInteractionRus)
+sjPlot::tab_model(mixedModelPointInteractionRus) 
+
+compare_performance(mixedModelPointRefExprInfStatRus, mixedModelPointInteractionRus)
+anova(mixedModelPointRefExprInfStatRus, mixedModelPointInteractionRus)
+```
+## Plot predicted probabilites based on models for English and Russian 
+```{r, warning=F, message=F}
+plotModelPointOccEng <- ggpredict(mixedModelPointRefExprInfStatEng, terms = c("reference", "infstat")) %>% as.data.frame()
+plotModelPointOccRus <- ggpredict(mixedModelPointRefExprInfStatRus, terms = c("reference", "infstat"))%>% as.data.frame()
+
+referent_names <- list(
+  'specific'="Specific nouns",
+  'generic'="Generic nouns",
+  'pp'="Person pronouns"
+)
+referent_labeller <- function(variable,value){
+  return(referent_names[value])
+}
+  
+plotPredProbPointOccEngRus <- ggplot(data = plotModelPointOccEng, aes(x=group, y=predicted)) +
+  geom_errorbar(aes(ymin=conf.low, ymax=conf.high,color="#183A5A"), width=.1, alpha = 0.8,
+                position=position_nudge(x=-0.2)) + # English errorbar
+  geom_point(aes(color="#183A5A"), size = 3, alpha = 0.8,  position = position_nudge(x=-0.2)) + 
+  geom_errorbar(data = plotModelPointOccRus, aes(ymin=conf.low, ymax=conf.high, color="#EFB758"), width=.1, alpha = 0.8, position = position_nudge(x=0.2)) + # Russian errorbar
+  geom_point(data = plotModelPointOccRus, aes(color="#EFB758"), size = 3, alpha = 0.8, position = position_nudge(x=0.2)) + 
+  facet_grid(~factor(x, levels=c('specific','generic','pp')), scales = "free", space = "free", labeller=referent_labeller) +
+  coord_cartesian(ylim=c(0, 1)) +
+  theme_minimal() +
+  scale_color_identity(name = "Languages:",
+                          breaks = c("#183A5A", "#EFB758"),
+                          labels = c("English", "Russian"),
+                          guide = "legend") +
+  labs(x="", y="Predicted probabilites of pointing", title = "",
+       color="Language") +
+  theme(legend.position = "bottom",
+        strip.text.x = element_text(size=12),
+        axis.title = element_text(size=12),
+        axis.title.y = element_text(vjust=3),
+        axis.text = element_text(size=12),
+        plot.title = element_text(size=12, hjust = 0.5),
+        legend.text = element_text(size=12),
+        legend.title = element_text(size=12)) + geom_blank()
+plotPredProbPointOccEngRus
+```
+## Save figures
+```{r}
+png(here("figures", "FPPT-Point-rates-two-lang.png"), width = 16, height = 10, units = "cm", res = 500)
+plotPredProbPointOccEngRus
+dev.off()
+
+pdf(here("figures", "FPPT-Point-rates-two-lang.pdf"), width = 6, height = 4)
+plotPredProbPointOccEngRus
+dev.off()
+```
+## Session Info
+```{r}
+sessionInfo()
+```

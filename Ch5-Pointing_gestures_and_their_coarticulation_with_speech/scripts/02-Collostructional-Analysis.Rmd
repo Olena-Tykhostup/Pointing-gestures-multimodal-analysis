@@ -1,0 +1,482 @@
+---
+title: "02-Collostructional-Analysis"
+author: "Olena Tykhostup"
+date: "2023-04-20"
+output: html_document
+---
+
+This is the code used for data analysis reported in Chapter 5 of the dissertation "Multimodal annotation and analysis of a Narrative problem solving task in English, Idi, and Russian". It analyzes pointing gestures and their spoken affiliates. The code loads transcribed and annotated data from TXT files in English and Russian. This data is then prepared for analysis. The core analysis involves running a collexeme analysis to identify statistically significant associations between spoken expressions and pointing gestures. This process aims to uncover patterns in how certain expressions are preferentially used in the proximity of pointing gestures, offering insights into the linguistic structure and usage patterns around these co-speech movements.
+
+## Load packages
+## Install collostruction package from "scripts" folder
+```{r, warning=F, message=F}
+library(here)
+library(readtext)
+library(tidyverse)
+library(hunspell)
+library(udpipe)
+# install.packages(here("scripts", "collostructions_0.2.0.tar.gz"), repos = NULL)
+library(collostructions)
+```
+## Get the English data in
+```{r}
+englishCorpusRaw <- readtext(here("data", "fppt-eng-phase1-corpus-points-v3.txt")) 
+englishCorpusRaw <- gsub("PGB-(.*?)\\s", "PGB ", englishCorpusRaw) # remove gesture form annotations
+```
+## Tokenize, get token frequencies
+```{r, warning=F, message=F}
+engModel <- udpipe_download_model(language = "english") # Downloading English model for UDPipe
+englishTokenizedInitial <- udpipe(englishCorpusRaw, object = engModel) %>%
+  filter(!grepl("[[:punct:]]", lemma)) %>%
+  mutate_if(is.character, str_to_lower)
+
+engTokFreq <- englishTokenizedInitial %>% 
+  count(token, sort = TRUE) %>% # Counting token frequencies
+  rename(token_freq_corp = n) 
+```
+## Spell check and correct wrong lemmas
+```{r, warning=F, message=F}
+# Check bad lemma spellings
+bad_words <- hunspell_find(englishTokenizedInitial$lemma)
+sort(unique(unlist(bad_words)))
+
+# Define function to correct spellings
+correct_spelling <- function(text) {
+  
+  words <- text %>% 
+  str_split(" ") %>% 
+  .[[1]]
+
+  correct <- words %>% 
+    sapply(function(x) {hunspell_check(x) } ) %>% 
+    unname
+  
+  # Correct the word if incorrect
+  if(!correct) {
+  
+    misspelled <- words[(!correct)] 
+  
+    suggestions <- misspelled %>% 
+      hunspell_suggest() 
+    
+    suggested_words <- sapply(seq_along(suggestions), function(y, i) 
+      {ifelse(length(y[[1]]) == 0, misspelled[i], y[[i]][1]) }, 
+      y=suggestions)
+
+    words[as.logical(!correct)] <- suggested_words 
+  }
+  words %>% paste0(collapse = " ")
+}
+
+# Add good spellings
+englishTokenizedInitial$lemma2 <- englishTokenizedInitial$lemma %>% 
+  sapply(correct_spelling) %>% 
+  unname
+
+# Replace bad spellings, but keep PGB and PGE, remove spaces
+englishTokenizedInitial <- englishTokenizedInitial %>%
+  mutate(lemma = case_when(str_detect(token,"pgb") ~ "pgb",
+                         str_detect(token, "pge") ~ "pge",
+                         str_detect(lemma, "yoyou") ~ "you",
+                         str_detect(lemma, "homecom") ~ "homecoming",
+                        TRUE ~ lemma2)) %>%
+  mutate(lemma = gsub('\\s+', '', lemma))
+
+# Check bad spellings again
+bad_words <- hunspell_find(englishTokenizedInitial$lemma)
+sort(unique(unlist(bad_words)))
+```
+## Get type frequencies
+```{r}
+engLemmaFreq <- englishTokenizedInitial %>%
+  count(lemma, sort = TRUE)
+```
+## Custom parsing based on pointing gesture boundaries
+```{r}
+ec1 <- gsub("PGB\\s([[:upper:]])", "PGB \\L\\1", perl=TRUE, englishCorpusRaw) # when PGB is followed by uppercase, make it lowe
+ec2 <- gsub("PGE\\s", "PGE. ", ec1) # add periods after PGE
+ec3 <- gsub("(?<!\\.)\\sPGB", ". PGB", perl=TRUE, ec2) # if there is no period before PGB, add it
+ec4 <- gsub("^PGB(.*?)[[:punct:]][[:blank:]](.*?)PGE$", "PGB\\1 \\2 PGE", ec3) # If there is a period anywhere between PGB and PGE, remove it
+```
+## Prepare final data
+```{r, warning=F, message=F}
+# Tokenize again based on PG boundaries
+engRefinedTokenizedCorpus <- udpipe(ec4,
+            object = engModel)
+
+# Add good spellings
+engRefinedTokenizedCorpus$lemma2 <- engRefinedTokenizedCorpus$lemma %>% 
+  sapply(correct_spelling) %>% 
+  unname
+
+# Replace bad spellings, but keep PGB and PGE, remove spaces
+engRefinedTokenizedCorpus <- engRefinedTokenizedCorpus %>%
+  mutate(lemma = case_when(str_detect(token,"pgb") ~ "pgb",
+                         str_detect(token, "pge") ~ "pge",
+                         str_detect(lemma, "yoyou") ~ "you",
+                         str_detect(lemma, "homecom") ~ "homecoming",
+                        TRUE ~ lemma2)) %>%
+  mutate(lemma = gsub('\\s+', '', lemma))
+
+# Clean the data
+engFinalCleanAffiliateToken <- engRefinedTokenizedCorpus %>%
+  mutate(sentence = gsub('[[:punct:]]', '', sentence)) %>%
+  mutate_if(is.character, str_to_lower) %>%
+  filter(str_detect(sentence, "pgb|pge")) %>%
+  distinct(sentence) %>% # only keep unique rows
+  tidyr::separate(sentence,
+                  c("w1","w2","w3","w4", "w5", "w6", "w7", "w8", "w9", "w10", "w11", "w12", "w13", "w14"),
+                  "\\s") %>%
+  pivot_longer(w2:w14) %>% # reshape
+  na.omit %>%
+  mutate(lemma = englishTokenizedInitial$lemma[match(value, englishTokenizedInitial$token)]) %>%
+  mutate(l_freq_corp = engLemmaFreq$n[match(lemma, engLemmaFreq$lemma)]) %>%
+  add_count(lemma) %>%
+  rename(slot=name, token=value, l_freq_w_point = n) %>%
+  mutate(slot = as.factor(slot)) %>%
+  left_join(engTokFreq, by = "token") %>%
+  select(-1)
+
+head(engFinalCleanAffiliateToken)
+engFinalCleanAffiliateToken %>% write_tsv(here("data", "eng.point.affil.collex.data.tsv")) # save tsv data
+```
+## Get the Russian data in
+```{r}
+russianCorpusRaw <- readtext(here("Data", "fppt-rus-phase1-corpus-points-v2.txt"), encoding = "UTF-8")
+russianCorpusRaw <- gsub("PGB-(.*?)\\s", "PGB ", russianCorpusRaw) # remove gesture form annotations
+```
+## Tokenize, get token frequencies
+```{r, warning=F, message=F}
+rusModel <- udpipe_download_model(language = "russian")
+rusModel <- udpipe_load_model(file = rusModel$file_model)
+
+russianTokenizedInitial <- udpipe(russianCorpusRaw,
+            object = rusModel) %>%
+  filter(!grepl("[[:punct:]]", lemma)) %>%
+  mutate_if(is.character, str_to_lower)
+
+rusTokFreq <- russianTokenizedInitial %>% 
+  count(token, sort = T) %>%
+  rename(token_freq_corp = n) 
+
+russianTokenizedInitial <- russianTokenizedInitial %>%
+  mutate(lemma = case_when(str_detect(token, "наверное") ~ "наверное",
+                           str_detect(token, "^мм") ~ "мм",
+                           str_detect(token, "^рад") ~ "рад",
+                           str_detect(token, "^рады") ~ "рад",
+                           str_detect(token, "настаиваешь") ~ "настаивать",
+                           str_detect(token, "заключенный") ~ "заключенный",
+                           str_detect(token, "счастлив") ~ "счастлив",
+                           str_detect(token, "нечего") ~ "нечего",
+                           str_detect(token, "понятно") ~ "понятно",
+                           str_detect(token, "^ну") ~ "ну",
+                           str_detect(token, "кстати") ~ "кстати",
+                           str_detect(token, "вроде") ~ "вроде",
+                           str_detect(token, "похоже") ~ "похоже",
+                           str_detect(token, "видишь") ~ "видеть",
+                           str_detect(token, "смеешься") ~ "смеяться",
+                           str_detect(token, "^тоже") ~ "тоже",
+                           str_detect(token, "^типа") ~ "типа",
+                           str_detect(token, "^обо") ~ "о",
+                           str_detect(token, "^потом") ~ "потом",
+                           str_detect(token, "^вижу") ~ "видеть",
+                           str_detect(token, "^тут") ~ "тут",
+                           str_detect(token, "^мда") ~ "мда",
+                           str_detect(token, "^оля") ~ "оля",
+                           str_detect(token, "живем") ~ "жить",
+                           str_detect(token, "бьет") ~ "бить",
+                           str_detect(token, "любит") ~ "любить",
+                           str_detect(token, "^короче") ~ "короче",
+                           str_detect(token, "^мне") ~ "я",
+                           str_detect(token, "хватит") ~ "хватит",
+                           str_detect(token, "^ее$") ~ "она",
+                           str_detect(token, "похожа") ~ "похожий",
+                           str_detect(token, "похожи") ~ "похожий",
+                           str_detect(token, "^его$") ~ "он",
+                           str_detect(token, "^бил$") ~ "бить",
+                           str_detect(token, "^такой") ~ "такой",
+                           str_detect(token, "окей") ~ "окей",
+                           str_detect(token, "^угу") ~ "угу",
+                          TRUE ~ as.character(as.factor(lemma))))
+                       
+```
+## Type frequencies
+```{r}
+rusLemmaFreq <- russianTokenizedInitial %>%
+  count(lemma, sort = T)
+```
+## Generate data for analysis
+```{r, warning=F, message=F}
+rusFinalCleanAffiliateToken <- russianTokenizedInitial %>% 
+  distinct(sentence) %>%
+  mutate(sentence = gsub('[[:punct:]]', '', sentence)) %>%
+  tidytext::unnest_tokens(output = s1, 
+                input = sentence, 
+                token = function(x) str_extract_all(x, pattern="pgb(.*?)pge")) %>%
+  tidyr::separate(s1,
+                  c("w1","w2","w3","w4", "w5", "w6", "w7", "w8", "w9", "w10", "w11", "w12", "w13", "w14"),
+                  "\\s") %>%
+  pivot_longer(w2:w14) %>% # reshape
+  na.omit %>%
+  mutate(lemma = russianTokenizedInitial$lemma[match(value, russianTokenizedInitial$token)]) %>%
+  mutate(l_freq_corp = rusLemmaFreq$n[match(lemma, rusLemmaFreq$lemma)]) %>%
+  add_count(lemma) %>%
+  rename(slot=name, token=value, l_freq_w_point = n) %>%
+  mutate(slot = as.factor(slot))  %>%
+  left_join(rusTokFreq, by = "token") %>%
+  select(-1)
+
+head(rusFinalCleanAffiliateToken)
+
+rusFinalCleanAffiliateToken %>% write_tsv(here("data", "rus.point.affil.collex.data.tsv")) # save tsv data
+```
+## Simple Collexeme Analysis
+## Get English and Russian data in and inspect
+```{r}
+eng.point.collex.df <- read_tsv(here("data", "eng.point.affil.collex.data.tsv"), show_col_types = FALSE)
+rus.point.collex.df <- read_tsv(here("data", "rus.point.affil.collex.data.tsv"), show_col_types = FALSE)
+head(eng.point.collex.df)
+head(rus.point.collex.df)
+```
+
+## Prepare data for Simple Collexeme Analysis
+## Run for each slot between pointing gesture beginning and pointing gesture end in English
+```{r}
+# Define general pipe
+slots.data <- . %>%
+  mutate_if(is.double, as.integer) %>% # convert dbl into int
+  mutate(slot = as.factor(slot)) %>% # convert slot col from chr into fct
+  drop_na %>% 
+  add_count(lemma) %>% # count the freq of each lemma in this slot after the start of the pointing gesture
+  rename(l_freq_in_this_slot=n) %>%
+  distinct(lemma, .keep_all = TRUE) %>% # select distinct rows based on the lemma column and keeps all other columns
+  select(3,7,4) # leep three cols: lemma, lemma freq with pointing gesture in this slot, lemma freq in corpus
+
+# For every word in a certain slot the start of the pointing gesture, 
+# get the lemma frequency of occurence with pointing gestures in this slot
+# and get the lemma frequency in corpus
+
+# Slot 1
+eng.sl.1 <- eng.point.collex.df %>%
+  filter(slot=="w2") %>% # keep only those lemmas that occur immediately after the start of pointing gesture (in slot w1)
+  slots.data() %>% # apply cutom general pipe from above
+  as.data.frame()
+
+# Slot 2
+eng.sl.2 <- eng.point.collex.df %>%
+  filter(slot=="w3") %>%
+  slots.data() %>%
+  as.data.frame()
+
+# Slot 3
+eng.sl.3 <- eng.point.collex.df %>%
+  filter(slot=="w4") %>%
+  slots.data() %>%
+  as.data.frame()
+
+# Slot 4
+eng.sl.4 <- eng.point.collex.df %>%
+  filter(slot=="w5") %>%
+  slots.data() %>%
+  filter(!lemma %in% "holding") %>%
+  as.data.frame()
+
+# Retreive the same data but for slots, irrespective of when the lemma occurs relative to the pointing gesture
+eng.all.sl <- eng.point.collex.df %>%
+  drop_na %>% 
+  distinct(lemma, .keep_all = TRUE) %>%
+  select(3,5,4) %>% # select 3 cols, lemma, lemma freq in corpus, lemma freq with pointing in any position
+  arrange(desc(l_freq_corp), desc(l_freq_w_point)) %>%
+  filter(!lemma %in% c("pgb", "pge", "holding")) %>%
+  as.data.frame()
+```
+
+## Run Simple Collexeme Analysis
+```{r, warning=F, message=F}
+# Function to run collexeme analysis and print the subset
+run_collex_and_print <- function(slot, corpsize, am = "logl", reverse = FALSE, 
+                                 decimals = 2, threshold = 1, cxn.freq = NULL, 
+                                 str.dir = FALSE) {
+  results <- collex(slot, corpsize = 12959, am = am, reverse = reverse, # num of words in the text
+                    decimals = decimals, threshold = threshold, 
+                    cxn.freq = cxn.freq, str.dir = str.dir) %>%
+             filter(!SIGNIF %in% "ns")
+  top_rows <- head(results, 15)
+  bottom_rows <- tail(results, 5)
+  results <- rbind(top_rows, bottom_rows)
+  knitr::kable(results)
+}
+
+# Run the function for each slot
+run_collex_and_print(eng.sl.1)
+run_collex_and_print(eng.sl.2)
+run_collex_and_print(eng.sl.3)
+run_collex_and_print(eng.sl.4)
+
+# Run for all slots
+run_collex_and_print(eng.all.sl)
+```
+## Prepare Russian data for Simple Collexeme Analysis
+## Run for each slot between pointing gesture beginning and pointing gesture end in Russian
+```{r}
+# General pipe
+slots.data <- . %>%
+  mutate_if(is.double, as.integer) %>% # convert dbl into int
+  mutate(slot = as.factor(slot)) %>% # convert slot col from chr into fct
+  add_count(lemma) %>%  # count lemmas just in this slot
+  rename(l_freq_slot=n) %>% # rename the lemma slot count column
+  drop_na %>% 
+  distinct(lemma, .keep_all = TRUE) %>% # only keep unique lemmas
+  select(3,7,4) # keep the lemma, frequency in corpus and frequency in this slot of point counts
+
+# Slot 1
+r.sl.1 <- rus.point.collex.df %>%
+  filter(slot=="w2") %>%
+  slots.data() %>%
+  as.data.frame()
+
+# Slot 2
+r.sl.2 <- rus.point.collex.df %>%
+  filter(slot=="w3") %>%
+  slots.data() %>%
+  as.data.frame()
+
+# Slot 3
+r.sl.3 <- rus.point.collex.df %>%
+  filter(slot=="w4") %>%
+  slots.data() %>%
+  as.data.frame()
+
+# Slot 4
+r.sl.4 <- rus.point.collex.df %>%
+  filter(slot=="w5") %>%
+  slots.data() %>%
+  as.data.frame()
+
+r.slots.df.list <- list(r.sl.1, r.sl.2, r.sl.3, r.sl.4) # make a list of dfs
+
+# All slots
+r.all.sl <- rusFinalCleanAffiliateToken %>%
+  drop_na %>% 
+  distinct(lemma, .keep_all = TRUE) %>%
+  select(3,5,4) %>%
+  arrange(desc(l_freq_corp), desc(l_freq_w_point)) %>%
+  filter(!lemma %in% "pgb") %>%
+  filter(!lemma %in% "pge") %>%
+  filter(l_freq_corp >= l_freq_w_point) %>%
+  as.data.frame()
+```
+## Collexeme analysis in Russian
+```{r, warning=F, message=F}
+# num of words in the Russian transcription text
+r.crpsiz <- 11148
+
+# Apply collexeme analysis to each data frame in 'r.slots.df.list'
+rus.col.res <- lapply(r.slots.df.list, function(x) collex(x, corpsize = r.crpsiz, am = "logl", 
+                           reverse = FALSE, decimals = 2,
+                           threshold = 1, cxn.freq = NULL, 
+                           str.dir = FALSE))
+
+# Filter the results to keep only significant collexemes
+rus.col.res.sign <- lapply(rus.col.res, function(x) filter(x, SIGNIF != "ns"))
+
+# Assign each filtered collexeme analysis result to a new data frame
+for (i in 1:length(rus.col.res.sign)) {
+  assign(paste0("col.per.slot", i), as.data.frame(rus.col.res.sign[[i]]))
+}
+
+# Perform collexeme analysis on all slots combined
+r.scollex_results.all <- collex(r.all.sl, corpsize = r.crpsiz, am = "logl", 
+                           reverse = FALSE, decimals = 2,
+                           threshold = 1, cxn.freq = NULL, 
+                           str.dir = FALSE)
+
+# Filter the results to exclude non-significant collexemes
+col.per.all.slots <- r.scollex_results.all %>%
+  filter(!SIGNIF %in% "ns")
+```
+## Print all results
+```{r}
+print_subset_kable <- function(df) {
+  top_rows <- head(df, 15)
+  bottom_rows <- tail(df, 5)
+  combined_rows <- rbind(top_rows, bottom_rows)
+  knitr::kable(combined_rows)
+}
+
+print_subset_kable(col.per.slot1)
+print_subset_kable(col.per.slot2)
+print_subset_kable(col.per.slot3)
+print_subset_kable(col.per.slot4)
+print_subset_kable(col.per.all.slots)
+```
+## Covarying collexemes analysis
+## CCA in English
+```{r, warning=F, message=F}
+# Subset data
+covar.eng.dat <- englishTokenizedInitial %>%
+  mutate(sentence = gsub('[[:punct:]]', '', sentence)) %>%
+  mutate_if(is.character, str_to_lower) %>%
+  tidytext::unnest_tokens(output = s1, 
+                input = sentence, 
+                token = function(x) str_extract_all(x, pattern="pgb(.*?)pge")) %>%
+  distinct(s1) %>% # only keep unique rows
+  tidyr::separate(s1,
+                  c("w1","w2","w3"),
+                  "\\s") %>%
+  mutate(w2lemma = englishTokenizedInitial$lemma[match(w2, englishTokenizedInitial$token)]) %>%
+  mutate(w3lemma = englishTokenizedInitial$lemma[match(w3, englishTokenizedInitial$token)]) %>%
+  select(4:5)
+
+
+w2_df <- eng.point.collex.df %>%
+  filter(slot == "w2") %>%
+  select(token)
+
+w3_df <- eng.point.collex.df %>%
+  filter(slot == "w3") %>%
+  select(token)
+
+# Adjust w3_df to align with w2_df
+joint <- w3_df %>%
+  mutate(row_id = row_number()) %>%
+  right_join(w2_df %>% mutate(row_id = row_number() + 1), by = "row_id") %>%
+  select(-row_id) %>%
+  rename(w2lemma = token.x, w3lemma = token.y) %>%
+  as.data.frame()
+
+covar.eng.res <- collex.covar(joint)
+
+# Run the analysis
+covar.eng.res <- collex.covar(covar.eng.dat)
+
+# Selecting the first 8 rows
+selected_rows <- covar.eng.res %>%
+  slice_head(n = 8)
+
+# Display the selected rows
+knitr::kable(selected_rows)
+```
+## CCA in Russian
+```{r, warning=F, message=F}
+covar.rus.dat <- russianTokenizedInitial %>%
+  mutate(sentence = gsub('[[:punct:]]', '', sentence)) %>%
+  mutate_if(is.character, str_to_lower) %>%
+  tidytext::unnest_tokens(output = s1, 
+                input = sentence, 
+                token = function(x) str_extract_all(x, pattern="pgb(.*?)pge")) %>%
+  distinct(s1) %>% # only keep unique rows
+  tidyr::separate(s1,
+                  c("w1","w2","w3"),
+                  "\\s") %>%
+  mutate(w2lemma = russianTokenizedInitial$lemma[match(w2, russianTokenizedInitial$token)]) %>%
+  mutate(w3lemma = russianTokenizedInitial$lemma[match(w3, russianTokenizedInitial$token)]) %>%
+  select(4:5)
+
+covar.rus.res <- collex.covar(covar.rus.dat)
+print_subset_kable(covar.rus.res)
+```
+## Session info
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,199 @@
+---
+title: "01-Agreement-Target-Resolution"
+author: "Olena Tykhostup"
+date: "2023-12-19"
+output: html_document
+---
+This is the code used for data analysis reported in Chapter 4 of the dissertation "Multimodal annotation and analysis of a Narrative problem solving task in English, Idi, and Russian". This script calculates and visualizes the agreement between three annotators about the targets of pointing gestures annotated in three different conditions: (i) Gesture, card, speech; (ii) Gesture and card; (iii) Gesture only. 
+
+## Load packages
+```{r, warning=F, message=F}
+library(here)
+library(tidyverse)
+library(DescTools) # Kappa values CI
+library(irr) # Kappa values
+```
+## Load in the data
+```{r}
+# Targets in Gesture, card, speech annotation condition (GCSC)
+targets_GCSC <- read.csv(here("data", "targets_GestureCardSpeechCondition.csv"))
+
+# Targets in Gesture and card annotation condition (GCC)
+targets_GCC <- read.csv(here("data", "targets_GestureCardCondition.csv"))
+
+# Targets in Gesture only annotation condition (GOC)
+targets_GOC <- read.csv(here("data", "targets_GestureOnlyCondition.csv"))
+```
+## Inspect the data
+```{r}
+# Structure of each dataset
+str(targets_GCSC)
+str(targets_GCC)
+str(targets_GOC)
+```
+```{r}
+# Check for missing values
+datasets_list <- list(targets_GCSC, targets_GCC, targets_GOC)
+
+for (i in seq_along(datasets_list)) {
+  incomplete_cases <- datasets_list[[i]][!complete.cases(datasets_list[[i]]), ]
+  print(incomplete_cases)
+}
+```
+
+```{r}
+# Frequency tables for each dataset
+table(stack(targets_GCSC[-1]))
+table(stack(targets_GCC[-1]))
+table(stack(targets_GOC))
+```
+
+## Inspect Fleiss Kappa values
+Calculate Fleiss Kappa values for each dataset.
+```{r Fleiss}
+targets_GCCS_kappa <- kappam.fleiss(targets_GCSC[c(2:4)], 
+                                    detail = TRUE)
+targets_GCC_kappa <- kappam.fleiss(targets_GCC[c(2:4)], 
+                                   detail = TRUE)
+targets_GOC_kappa <- kappam.fleiss(targets_GOC, 
+                                   detail = TRUE)
+```
+Construct Confidence intervals for each Kappa point estimate and the overlaps. The Confidence intervals define a range in which the true coefficient lies with a given probability (95%).
+```{r Kappa with CI}
+# Gesture, card, speech condition (GCSC)
+DescTools::KappaM(targets_GCSC[c(2:4)], 
+                  method = "Fleiss",
+                  conf.level = 0.95)
+
+# Gesture and card condition (GCC)
+DescTools::KappaM(targets_GCC[c(2:4)],
+                  method = "Fleiss", 
+                  conf.level = 0.95)
+
+# Gesture only condition (GOC)
+DescTools::KappaM(targets_GOC, 
+                  method = "Fleiss",
+                  conf.level = 0.95)
+```
+## Plot Kappa values for each label in each annotation condition
+Prepare input data for the plot.
+```{r}
+# Convert 'targets_GCC_kappa' into a data frame, add a 'Tag' column with annotation labels, 
+# and assign a 'Condition' column for Gesture and card annotation condition (GCC)
+targets_GCC_kappa.levels <- cbind(as.data.frame.matrix(targets_GCC_kappa$detail), 
+                                  Tag = c("card", "interior", "other", "sg")) %>%
+  mutate(Condition = "GestureCard")
+
+  
+# Data frame with annotation condition Gesture, card, speech (GCSC)
+targets_GCCS_kappa.levels <- cbind(as.data.frame.matrix(targets_GCCS_kappa$detail), 
+                                   Tag = c("card", "interior", "other", "sg")) %>%
+  mutate(Condition = "GestureCardSpeech")
+
+
+# Data frame with annotation condition Gesture only (GOC)
+targets_GOC_kappa.levels <- cbind(as.data.frame.matrix(targets_GOC_kappa$detail), 
+                                  Tag = c("card", "interior", "sg")) %>%
+  mutate(Condition = "GestureOnly")
+
+# Combine three data frames by row and format for plotting
+all_targets_kappa <- rbind(targets_GCC_kappa.levels, 
+                           targets_GCCS_kappa.levels, 
+                           targets_GOC_kappa.levels) %>%
+  mutate_if(is.character, as.factor) %>%
+  select(Tag, everything())
+
+# Remove row names
+rownames(all_targets_kappa) <- NULL
+
+# Print data frame
+all_targets_kappa
+```
+Generate the plot.
+```{r, warning=F, message=F}
+# Prepare plot labels
+cond.labs <- c(
+  paste("Gesture and card \n (n=", nrow(targets_GCC), ")", sep=""),
+  paste("Gesture, card and speech \n (n=", nrow(targets_GCSC), ")", sep=""),
+  paste("Gesture only \n (n=", nrow(targets_GOC), ")", sep="")
+)
+names(cond.labs) <- c("GestureCard", 
+                      "GestureCardSpeech", 
+                      "GestureOnly")
+tick_labels <- c("Card", 
+                 "Interior", 
+                 "Individual", 
+                 "Other")
+
+# Set the order of annotation labels
+all_targets_kappa$Tag <- factor(all_targets_kappa$Tag,
+                                levels = c("card", 
+                                           "interior", 
+                                           "sg", 
+                                           "other"))
+# Set the order of plot sections
+all_targets_kappa$Condition <- factor(all_targets_kappa$Condition, 
+                                      levels = c("GestureCard", 
+                                                 "GestureCardSpeech", 
+                                                 "GestureOnly")) 
+
+# Plot
+targets.kappa.plot <- ggplot(all_targets_kappa %>%
+         arrange(Kappa, Tag, Condition), aes(Tag, Kappa)) +
+  geom_point(aes(color = Tag), size = 3) +
+  geom_segment(aes(x = Tag, xend = Tag, 
+                   y = 0, yend = Kappa, 
+                   color= Tag), 
+               size= 0.7, 
+               alpha=0.8) +
+  facet_grid(.~ Condition, scales="free", space = "free",
+             labeller = labeller(Condition=cond.labs)) + 
+  geom_hline(yintercept=0, 
+             linetype="dashed", 
+             color = "grey40", 
+             size = 0.5) +
+  scale_x_discrete(labels= tick_labels, expand=c(0.4, 0.3)) +
+  theme_minimal() +
+  theme(legend.position = "none", 
+        strip.text = element_text(size = 12),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        strip.background = element_rect(fill="grey95"),
+        axis.title.x = element_text(vjust=-0.9)) + 
+  labs(y = "Fleiss' Kappa",
+       x = "Annotation label") +
+  scale_y_continuous(limits = c(-0.1, 1), breaks = seq(0, 1, by = 0.2)) +
+  scale_color_manual(values=c("#183A5A", "#EFB758", "#C34129", "grey10")) +
+  geom_rect(aes(xmin=-Inf,xmax=Inf,
+                ymin=0.8,ymax=1),
+            alpha=0.1,fill="grey60") +
+  geom_rect(aes(xmin=-Inf,xmax=Inf,
+                ymin=0.6,ymax=0.8),
+            alpha=0.1,fill="grey70") +
+  geom_rect(aes(xmin=-Inf,xmax=Inf,
+                ymin=0.4,ymax=0.6),
+            alpha=0.1,fill="grey80") +
+  geom_rect(aes(xmin=-Inf,xmax=Inf,
+                ymin=0.2,ymax=0.4),
+            alpha=0.1,fill="grey90") +
+  geom_rect(aes(xmin=-Inf,xmax=Inf,
+                ymin=0,ymax=0.2),
+            alpha=0.1,fill="grey95")
+
+targets.kappa.plot
+```
+## Save plot
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# As PNG
+png(here("figures", "fppt-three-annotators-targets-kappa.png"), width = 10, height = 6, units = "cm", res = 500)
+targets.kappa.plot
+dev.off()
+
+# As PDF
+pdf(file = here("figures", "fppt-three-annotators-targets-kappa.pdf"), width = 10, height = 6)
+targets.kappa.plot
+dev.off()
+```
+## Session info
+```{r, warning=F}
+sessionInfo()
+```

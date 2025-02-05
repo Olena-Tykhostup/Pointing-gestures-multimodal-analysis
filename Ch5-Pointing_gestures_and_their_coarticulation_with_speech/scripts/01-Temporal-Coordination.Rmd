@@ -1,0 +1,219 @@
+---
+title: "01-Temporal-Coordination"
+author: "Olena Tykhostup"
+date: "2024-01-19"
+output: html_document
+---
+This is the code used for data analysis reported in Chapter 5 of the dissertation "Multimodal annotation and analysis of a Narrative problem solving task in English, Idi, and Russian". It analyzes pointing gestures and their spoken affiliates. It loads and cleans the data, calculates durations, and visualizes patterns. It examines the relationship between gestures and affiliates using linear regression and summarizes data through central tendencies. The script also explores the timing and overlap of gestures and affiliates.
+
+## Load packages
+```{r, warning=F, message=F}
+library(here)
+library(tidyverse)
+library(lubridate)
+```
+## Load in the data
+```{r}
+rawCoartData <- read.csv(here("data","coart_time_eng.csv"), header = F)
+```
+## Transform and clean the dataset for analysis
+Gesture ID 8 was excluded from the analysis due to its significantly longer duration compared to others, indicating a possible idiosyncrasy rather than a representative trend. This exclusion ensures the analysis remains focused on typical pointing gesture durations.
+```{r}
+cleanedCoartData <- rawCoartData %>%
+  mutate(V1 = gsub('@1', '', V1)) %>% # Remove '@1' from V1 column values
+  pivot_wider(names_from = V1, values_from = V8) %>% # Reshape data: two columns for each event type
+  mutate(event = if_else(!is.na(Point_form), "gest", "affil")) %>% # Create a new column 'event' to denote event type
+  select(1,3,6,9) %>% # Keep only relevant columns
+  rename(begin = V2, end = V4, dur = V7) %>% 
+  arrange(begin) %>%
+  mutate_at("event", factor) %>% 
+  mutate_at(c("begin","end"), 
+            function(x) as.POSIXct(as.character(x), 
+                                   format = "%H:%M:%OS")) %>%
+  group_by(event) %>% # Group data by event type
+  mutate(id = row_number()) %>% # Assign an ID number to each pair of events
+  group_by(id) %>% # Group data by the new ID values
+  pivot_wider(names_from = event, 
+              values_from = c(begin, end, dur)) %>% # Reshape data: times of two events per row
+  mutate(begin_diff = if_else(begin_gest <= begin_affil, 
+                              (begin_affil - begin_gest)*(-1), 
+                              begin_gest - begin_affil)) %>% # Calculate the difference in start times between events
+  mutate(end_diff = if_else(end_gest <= end_affil, 
+                            (end_affil - end_gest)*(-1), 
+                            end_gest - end_affil)) %>% # Calculate the difference in end times between events
+  mutate(dur_affil = dur_affil*0.001, dur_gest = dur_gest*0.001) %>% # Event durations from milliseconds to seconds
+  mutate(relative_begin_gest = begin_diff + 2)%>% # Relative start time difference with a fixed reference
+  mutate(relative_end_gest = end_diff + 4) %>% # Relative end time difference with a fixed reference
+  filter(id!=8) %>% # Remove outlier with ID 8
+  mutate(gest_dur_msec = dur_gest*1000) %>%
+  mutate(affil_dur_msec = dur_affil*1000)
+```
+## Instpect the df
+```{r}
+str(cleanedCoartData)
+head(cleanedCoartData)
+```
+## Create a plot to visualize the durations of pointing gestures and their affiliates
+```{r, warning=FALSE}
+point_affil_dur_hist <- cleanedCoartData %>%
+  ggplot() +
+  geom_histogram(aes(x=cleanedCoartData$gest_dur_msec, y = after_stat(density), 
+                     fill = "#183A5A"),
+                 alpha = 0.4,
+                 binwidth = 200) + # Histogram for gesture duration
+  geom_histogram(aes(x=cleanedCoartData$affil_dur_msec, y = after_stat(density), 
+                     fill = "#EFB758"),
+                 alpha = 0.4,
+                 binwidth = 200) + # Histogram for affiliate duration
+  geom_density(aes(x=cleanedCoartData$affil_dur_msec), 
+               col = "#EFB758", size=0.8) + # Density plot for affiliate duration
+  geom_density(aes(x=cleanedCoartData$gest_dur_msec), 
+               col = "#183A5A", size=0.8) + # Density plot for gesture duration
+  geom_rug(aes(x=cleanedCoartData$gest_dur_msec, y = NULL)) +
+  geom_rug(aes(x=cleanedCoartData$affil_dur_msec, y = NULL)) + 
+  theme_minimal() +
+  labs(x = 'Duration of event (msec)',
+       y = 'Density') +
+  theme(text = element_text(size=12),
+        legend.position = "bottom") +
+  scale_fill_manual(values=c("#183A5A", "#EFB758"),
+                    labels = c("Point", "Affiliate"),
+                    aesthetics = c("colour", "fill"),'Event type') +
+  guides(fill = guide_legend(override.aes = list(colour = "grey", size = 0.1)))
+
+point_affil_dur_hist
+```
+Save plot:
+```{r, warning=F, message=F}
+# As PNG
+png(here("figures", "fppt-eng-hist-point-affil-durations.png"), 
+    width = 15, height = 10, units = "cm", res = 500)
+point_affil_dur_hist
+dev.off()
+
+# As PDF
+pdf(here("figures", "fppt-eng-hist-point-affil-durations.pdf"), 
+    width = 6, height = 4)
+point_affil_dur_hist
+dev.off()
+```
+## Make scatter plot and fit a linear regression model to visualize 
+## the relationship between gesture and affiliate durations
+```{r}
+# Summarize data
+summary(cleanedCoartData[6:7])
+
+# Scatter plot
+ggplot(cleanedCoartData, aes(x = dur_gest, y = dur_affil)) +
+  geom_point() +
+  stat_smooth(method = lm) + 
+  theme_minimal()
+
+# Fit a linear model
+model <- lm(dur_gest ~ dur_affil, data = cleanedCoartData)
+summary(model)
+
+# Conf intervals of the model coefficients
+confint(model) 
+
+# Diagnostic plots for assessing model assumptions
+par(mfrow=c(2,2))
+plot(model)
+par(mfrow=c(1,1))
+```
+This linear regression model shows that, in line with the hypothesis, there is a statistically significant linear relationship between the duration of gestures and the duration of affiliates. However, the modest R-squared value of 0.2177 indicates that only approximately 21% of the variability in gesture duration can be explained by the duration of affiliates. While this suggests a relationship, it also implies that there are other factors not included in our model that contribute to the variability in gesture duration. The Residuals vs. Fitted plot, although not perfect, does not reveal a clear pattern of increasing or decreasing variance, indicating that homoscedasticity is not severely violated. The Normal Q-Q plot indicates some deviation from normality, particularly in the tails.
+
+## Calculate and compare central tendencies (mean, median, mode) of gesture and affiliate durations
+```{r}
+# Function to calculate mode 
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+# Create a dataframe for central tendencies
+central_tendencies <- data.frame(
+    Type = c("Affiliate", "Gesture"),
+    Mean = c(mean(cleanedCoartData$affil_dur_msec, na.rm = TRUE), 
+             mean(cleanedCoartData$gest_dur_msec, na.rm = TRUE)),
+    Median = c(median(cleanedCoartData$affil_dur_msec, na.rm = TRUE), 
+               median(cleanedCoartData$gest_dur_msec, na.rm = TRUE)),
+    Mode = c(getmode(cleanedCoartData$affil_dur_msec), 
+             getmode(cleanedCoartData$gest_dur_msec))
+)
+
+# Print the df
+print(central_tendencies)
+```
+## Code events into those where gestures starte before affiliates or vice versa and compare
+```{r}
+# Add a variable to indicate which behavior comes first
+gestureAffiliationOrder <- cleanedCoartData %>%
+  mutate(event = case_when(begin_gest <= begin_affil ~ "gest_first",
+                           TRUE ~ "affil_first")) %>%
+  mutate_at("event", factor) 
+
+# Contingency table
+gestureAffiliationOrder_table <- table(gestureAffiliationOrder$event)
+
+# Chi-square
+chisq.test(gestureAffiliationOrder_table)
+```
+## Calculate central tendencies of the overlaps
+```{r}
+# Mean, median, and mode of overlaps by event type
+overlap_stats <- gestureAffiliationOrder %>%
+  group_by(event) %>%
+  summarize(
+    Mean = mean(begin_diff, na.rm = TRUE),
+    Median = median(begin_diff, na.rm = TRUE),
+    Mode = getmode(begin_diff)
+  )
+
+# Print the df
+print(overlap_stats)
+```
+## Visualize realtive co-occurence of gestures and affiliates
+This plot shows when pointing gestures occur relative to their spoken affiliates. Each gesture has two points: a start and an end, connected by a line. The x-axis tells us when these gestures take place. The yellow box represents the time of occurence of spoken affilliates. It has two sides: a start and an end. It is scaled, so its length is not meaningful. To understand the plot, see how the gestures match up with the boundaries of the yellow box, revealing how gestures and their spoken affiliates are timed.
+```{r, warning=FALSE}
+point_aff_overlap_ggpolt <- ggplot(data = cleanedCoartData) +
+  geom_point(aes(x = relative_begin_gest,
+                 y = reorder(id, -relative_begin_gest)),
+             color="#183A5A") +
+  geom_point(aes(x = relative_end_gest,
+                 y = reorder(id, -relative_begin_gest)),
+             color="#183A5A") +
+  geom_segment(aes(x = relative_begin_gest, xend = relative_end_gest,
+                   y = reorder(id, -relative_begin_gest), 
+                   yend = reorder(id, -relative_begin_gest)),
+               color="#183A5A", size=1, alpha=0.6) +
+  annotate("rect", xmin=2, xmax=4, ymin=-Inf, ymax=Inf, 
+           alpha=0.2, color="#EFB758", fill="#EFB758") +
+  theme_minimal() +
+  xlim(-1, 7) +
+  labs(x = 'Begining and end times of pointing gestures relative to their spoken affiliates',
+       y = 'Randomly selected pointing gestures') +
+  theme(axis.text = element_blank(),
+        text = element_text(size=12)) +
+  scale_x_continuous(breaks = NULL) +
+  scale_y_discrete(breaks = NULL)
+point_aff_overlap_ggpolt
+```
+## Save plot
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# As PNG
+png(here("figures", "point-affiliate-overlap-polt.png"), 
+    width = 20, height =20, units = "cm", res = 500)
+point_aff_overlap_ggpolt
+dev.off()
+
+# As PDF
+pdf(here("figures", "point-affiliate-overlap-polt.pdf"), 
+    width = 6, height = 6)
+point_aff_overlap_ggpolt
+dev.off()
+```
+
+```{r}
+sessionInfo()
+```

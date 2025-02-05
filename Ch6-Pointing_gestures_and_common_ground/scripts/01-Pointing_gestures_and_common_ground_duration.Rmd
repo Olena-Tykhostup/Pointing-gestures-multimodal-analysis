@@ -1,0 +1,276 @@
+---
+title: "01-Pointing_gestures_and_common_ground_duration"
+author: "Olena Tykhostup"
+date: "2022-01-29"
+output: html_document
+---
+This is the code used for data analysis reported in Chapter 6 of the dissertation titled ‘Multimodal Annotation and Analysis of a Narrative Problem-Solving Task in English, Idi, and Russian’. This script conducts a statistical analysis on the dataset that includes the durations of pointing gestures in the three languages and the annotations of information status of co-produced spoken expressions. Initially, the data is formatted and explored by plotting distributions. This is followed by fitting regression models to understand the effects of different variables on the duration of pointing gestures in three languages.
+## Load the packages
+```{r, warning=F, message=F}
+library(here)
+library(lubridate)
+library(ggplot2)
+library(tidyverse)
+library(sjPlot) # for tab_model and plot_model functions
+library(lme4)
+library(car)
+library(ggbeeswarm)
+library(ggpubr)
+```
+## Define the color palette
+```{r}
+customColors <- c("#183A5A", "#EFB758", "#C34129", "#E2DBC9")
+```
+## Load the data
+English, Idi, Russian data samples, both experiment phases.
+```{r load}
+pointCommonGroundData <- read.csv(here("data", "FPPT-EIR-Full-Annotations.csv"))
+```
+## Prepare the data for analysis
+```{r, warning=F, message=F}
+cleanDataForAnalysis <- pointCommonGroundData %>%
+  mutate_at(vars(begin, end), ~ as.POSIXct(., format = "%Y-%m-%dT%H:%M:%SZ")) %>% # transform time columns to POSIXct
+  mutate_at(vars(speaker, trial, affil, infstat, shape, effort, traj, orient, target, cards, lang, phase),funs(factor(.))) %>% # transform all columns into factors (card stays character)
+  mutate(affwords = str_count(coart, fixed(".")),
+         affwords = as.integer(affwords + 1))  # a column that contains number of words in affiliate
+```
+## Inspect the df
+```{r}
+str(cleanDataForAnalysis)
+head(cleanDataForAnalysis)
+summary(cleanDataForAnalysis)
+sum(is.na(cleanDataForAnalysis))
+```
+## Common ground and pointing gesture duration
+## Explore the data
+The durations are slightly scewed to the left, there's variation by speaker.
+```{r, warning=F, message=F}
+# Plot a histogram of log-transformed durations of pointing gestures
+cleanDataForAnalysis %>%
+  ggplot(aes(dur + 1)) +
+  geom_histogram(fill="midnightblue", alpha=0.7)+
+  scale_x_log10() +
+  labs(x = "Duration of poinitng gestures") + 
+  theme_minimal()
+
+# Plot a boxplot of pointing gesture durations by information status, overlay a linear model
+cleanDataForAnalysis %>%
+  ggplot(aes(infstat, dur)) +
+  geom_boxplot() +
+  labs(x = "Information status", y = "Duration of poinitng gestures") +
+  geom_smooth(method = "lm")  + 
+  theme_minimal()
+
+# Plot a scatter plot of pointing gesture durations by speaker, overlay a linear model
+cleanDataForAnalysis %>%
+  ggplot(aes(dur, speaker)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_minimal() +
+  labs(x = "Duration of poinitng gestures", y = "Speaker")
+```
+## How are the durations distributed by effort in each language?
+```{r by article, warning=FALSE}
+# New facet label names for languange
+lang.labs <- c("English", "Idi", "Russian")
+names(lang.labs) <- c("eng", "idi", "rus")
+
+my_comparisons = list( c("old", "new"))
+
+plot.dur <- cleanDataForAnalysis %>%
+  filter(infstat!= "other") %>%
+  ggplot(aes(infstat, dur + 1, color=infstat, fill=infstat)) +
+  geom_boxplot(alpha = 0.8, outlier.color = NA, width=0.5, colour="grey20", size=0.3) +
+  geom_quasirandom(alpha = 0.1, color = "grey20") +
+  scale_fill_manual(values=customColors) +
+  facet_grid(~lang, space = "free", scales="free", labeller = labeller(lang=lang.labs)) +
+  scale_y_log10() +
+  labs(x = NULL, y = "Duration of pointing gestures, msec") +
+  theme_minimal() +
+  theme(
+        legend.position = "none",
+        plot.title=element_text(size=12, vjust=2),
+        axis.title.x=element_text(vjust=-1, size=12),
+        axis.title.y=element_text(vjust=2.5, size=12)) +
+  theme(strip.text = element_text(size=12, colour = "black"),
+        strip.background = element_rect(fill="grey90", size=1, color = "grey")) +
+  theme(axis.text.x = element_text(size=12, color="grey20"),
+          axis.text.y = element_text(size=12, color="grey20")) + 
+  stat_compare_means(comparisons = my_comparisons, method = "t.test",
+    label = "p.signif")
+
+# Print plot
+plot.dur
+```
+## Save plot
+```{r, warning=F, message=F}
+png(here("figures", "FPPT-Point-dur-by-Lang-boxplot.png"), width = 26, height = 11, units = "cm", res = 500)
+plot.dur
+dev.off()
+
+pdf(here("figures", "FPPT-Point-dur-by-Lang-boxplot.pdf"), width = 6, height = 4)
+plot.dur
+dev.off()
+```
+## Regression modelling
+## Prepare the df with English durations
+```{r dur regr}
+durationDataEng <- cleanDataForAnalysis %>%
+  filter(dur <= 7000) %>% # remove 3 outlier values that are longer than 7000 msec
+  filter(infstat!= "other") %>%
+  filter(lang=="eng") %>%
+  select(speaker, dur, infstat, cards)
+```
+## Simple model with and without random effects
+The inclusion of a random effect structure  is justified as the AIC of the model with speakers random intercepts is lower than the AIC of the model without random intercepts.
+```{r}
+baseModelDurationEng <- glm(dur ~ infstat, family = gaussian, data = durationDataEng)
+randomInterceptModelDurationEng <- lme4::lmer(dur ~ infstat + (1|speaker), data = durationDataEng)
+
+AIC(baseModelDurationEng, randomInterceptModelDurationEng)
+```
+## Model with number of cards on the table as another fixed effect
+Adding the number of cards as a fixed effect does not significantly improve the model fit compared to the simpler model that only includes infstat and random intercepts for speaker.
+```{r, warning=F, message=F}
+cardsEffectModelDurationEng <- lmer(dur ~ infstat + cards + (1|speaker), data = durationDataEng)
+anova(randomInterceptModelDurationEng, cardsEffectModelDurationEng, test = "Chi")
+```
+## Inspect model
+```{r}
+summary(randomInterceptModelDurationEng)
+```
+## Run diagnostics
+There is variation in the model's prediction errors across different speakers, suggesting that speaker-related factors may be influencing the duration predictions. Some speakers consistently exhibit residuals clustered above or below the zero line, indicating a potential systematic bias in the model for those individuals. Levene's Test suggests that the differences in variances across groups are not statistically significant at the 0.05 level.
+```{r, warning=F, message=F}
+# residuals per speaker 
+plot(randomInterceptModelDurationEng, 
+     as.factor(speaker) ~ resid(., scaled=TRUE),
+     abline=0,
+     pch=16,
+     xlab="Standardised residuals",
+     ylab="Speakers")
+
+# check homogeneity
+car::leveneTest(durationDataEng$dur,
+                durationDataEng$speaker,
+                center = mean)
+
+# plot predicted values
+sjPlot::plot_model(randomInterceptModelDurationEng,
+                   type = "pred", 
+                   terms = c("infstat")) +
+  scale_x_continuous(name = "infstat", 
+                     breaks = seq(-500, 300, 100), 
+                     labels = seq(1150, 1950, 100))
+
+# residuals of fitted values against observed
+qqnorm(resid(randomInterceptModelDurationEng),
+       pch=16,
+       col=durationDataEng$speaker)
+qqline(resid(randomInterceptModelDurationEng))
+```
+## Df with Russian durations
+```{r}
+durationDataRus <- cleanDataForAnalysis %>%
+  filter(dur <= 7000) %>% # remove 3 outlier values that are longer than 7000 msec
+  filter(infstat!= "other") %>%
+  filter(lang=="rus") %>%
+  select(speaker, dur, cards, infstat, phase)
+```
+## Simple model with and without random effects
+The inclusion of a random effect structure  is justified as the AIC of the model with speakers random intercepts is lower than the AIC of the model without random intercepts.
+```{r}
+baseModelDurationRus  <- glm(dur ~ infstat, family = gaussian, data = durationDataRus)
+randIntModelDurationRus <- lmer(dur ~ infstat + (1|speaker), data = durationDataRus)
+
+AIC(baseModelDurationRus , randIntModelDurationRus)
+```
+## Model with number of cards on the table as another fixed effect
+Adding the number of cards as a fixed effect does not significantly improve the model fit compared to the simpler model that only includes infstat and random intercepts for speaker.
+```{r}
+cardsEffectModelDurationRus <- lmer(dur ~ infstat + cards + (1|speaker), 
+                                    data = durationDataRus)
+
+anova(randIntModelDurationRus, cardsEffectModelDurationRus, test = "Chi")
+```
+## Run diagnostics
+The diagnostics plots reveal that there is variation in the model's prediction errors across different speakers, suggesting that speaker-related factors may be influencing the duration predictions. Some speakers consistently exhibit residuals clustered above or below the zero line, indicating a potential systematic bias in the model for those individuals. Levene's Test suggests that unlike in the English subset of the data, in Russian, the differences in variances across groups are statistically significant at the 0.05 level.
+```{r, warning=F, message=F}
+# residuals per speaker 
+plot(randIntModelDurationRus, 
+     as.factor(speaker) ~ resid(., scaled=TRUE),
+     abline=0,
+     pch=16,
+     xlab="Standardised residuals",
+     ylab="Speakers")
+
+# check homogeneity
+car::leveneTest(durationDataRus$dur,
+                durationDataRus$speaker,
+                center = mean)
+
+# plot predicted values
+sjPlot::plot_model(randIntModelDurationRus,
+                   type = "pred", 
+                   terms = c("infstat")) +
+  scale_x_continuous(name = "infstat", 
+                     breaks = seq(-500, 300, 100), 
+                     labels = seq(1150, 1950, 100))
+
+# residuals of fitted values against observed
+qqnorm(resid(randIntModelDurationRus),
+       pch=16,
+       col=durationDataEng$speaker)
+qqline(resid(randIntModelDurationRus))
+```
+## Compare to model with only gestures shorter than 5000 ms
+The model that excluded the longest gestures performs better. A possible explanatiton is that very long pointing gestures are idiosyncratic or differ in duration for reasons other than information structure.
+```{r}
+durationDataRusNoOutlier <- durationDataRus %>%
+  filter(dur <= 5000)
+
+randIntModelDurationRusNoOutlier <- lmer(dur ~ infstat + (1|speaker), data = durationDataRusNoOutlier)
+
+# Compare models using AIC
+AIC(randIntModelDurationRus, randIntModelDurationRusNoOutlier)
+
+# Compare models using BIC
+BIC(randIntModelDurationRus, randIntModelDurationRusNoOutlier)
+
+```
+## Report the model for durations of pointing gestures in Russian
+```{r}
+summary(randIntModelDurationRus)
+sjPlot::tab_model(randIntModelDurationRus) 
+```
+## Df with Idi durations and model
+```{r}
+durationDataIdi <- cleanDataForAnalysis %>%
+  filter(infstat != "other") %>%
+  filter(lang == "idi") %>%
+  select(speaker, dur,infstat)
+
+ModelDurationIdi <- glm(dur ~ infstat, family = gaussian, data = durationDataIdi)
+summary(ModelDurationIdi)
+sjPlot::tab_model(ModelDurationIdi) 
+```
+## Idi model diagnostics
+The results of the diagnostics suggest that while the central portion of the data may be normally distributed, there are deviations from normality in the tails.
+```{r, warning=F, message=F}
+# residuals per speaker 
+plot(ModelDurationIdi,
+     abline=0,
+     pch=16)
+
+# plot predicted values
+sjPlot::plot_model(ModelDurationIdi,
+                   type = "pred", 
+                   terms = c("infstat")) +
+  scale_x_continuous(name = "infstat", 
+                     breaks = seq(-500, 300, 100), 
+                     labels = seq(1150, 1950, 100))
+```
+## Session Info
+```{r}
+sessionInfo()
+```

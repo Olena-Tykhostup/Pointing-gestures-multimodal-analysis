@@ -1,0 +1,572 @@
+---
+title: "02-Target-Resolution-No-Speech"
+author: "Olena Tykhostup"
+date: "2024-01-10"
+output: 
+  html_document:
+    fig.path: "Ch4-Pointing_gesture_and_target_resolution/figures/"
+---
+This is the code used for data analysis reported in Chapter 4 of the dissertation titled 'Multimodal Annotation and Analysis of a Narrative Problem-Solving Task in English, Idi, and Russian'. This script generates mosaic plots to visualize the frequencies of occurrence of four form-related variables and target types as classified by the annotators under the Gesture and Card condition, where gestures were coded without access to concurrent speech. Subsequently, chi-squared tests are conducted, followed by the fitting and visualization of a conditional inference tree. The code also develops a Conditional Random Forest model and evaluates it using Partial Dependence Plots and the visualization of predicted probabilities.
+
+## Load packages
+```{r, warning=F, message=F}
+library(here)
+library(tidyverse)
+library(ggmosaic)
+library(patchwork)
+library(party)
+library(partykit)
+library(ggparty)
+library(caret)
+library(pdp)
+library(scales)
+```
+## Define colour palette
+```{r}
+customColors <- c("#183A5A", "#EFB758", "#C34129", "#E2DBC9")
+```
+## Load the data
+```{r}
+noSpeechAnnotations <- read.csv(here("data", "FPPT-EIR-NoSpeech-Annotations.csv"))
+```
+## Prepare the df for analysis
+```{r}
+# Select relevant columns, filter data, and ensure no missing values
+noSpeechAnnotationsCleaned <- noSpeechAnnotations %>%
+  select(speaker, 
+         shape, 
+         effort, 
+         traj, 
+         orient, 
+         target, 
+         lang) %>% 
+  filter(!target=="other") %>% 
+  mutate_if(is.character,as.factor) %>% 
+  drop_na()
+```
+Inspect the data.
+```{r}
+# Structure of the cleaned dataframe
+str(noSpeechAnnotationsCleaned)
+# Check for missing values
+sum(is.na(noSpeechAnnotationsCleaned))
+# Summary statistics
+summary(noSpeechAnnotationsCleaned)
+```
+## Plot the data
+Baloon plot to inspect variation across speakers.
+```{r}
+# Prepare the data frame for visualization
+noSpeechAnnotationsLong <- noSpeechAnnotationsCleaned %>%
+  pivot_longer(cols = c(shape, effort, traj, orient), 
+               names_to = "category", 
+               values_to = "value") %>%
+  group_by(speaker, category, value) %>%
+  summarise(Freq = n(), .groups = 'drop') %>%
+  mutate(category = factor(category, 
+                           levels = c("effort", "traj", "orient", "shape"),
+                           labels = c("Effort", "Trajectory", "Orientation", "Hand shape")))
+
+# Create a balloon plot with a custom gradient
+balloon_plot <- ggplot(noSpeechAnnotationsLong, 
+                       aes(x = value, y = speaker, size = Freq, fill = Freq)) +
+  geom_point(shape = 21) +
+  scale_size(range = c(1, 10)) +
+  scale_fill_gradientn(colors = customColors) + 
+  facet_wrap(~category, scales = 'free_x', ncol = 4) +
+  theme_minimal() +
+  theme(legend.position = "right",
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size = 10)) +
+  labs(x = NULL, y = "Speaker", fill = "Frequency")
+
+# Print the plot
+balloon_plot
+```
+## Save plot
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# As PNG
+png(here("figures", "fppt-forms-participants-balloon-plot.png"), 
+    width = 20, 
+    height = 20, 
+    units = "cm", 
+    res = 500)
+balloon_plot
+dev.off()
+
+# As PDF
+pdf(here("figures", "fppt-forms-participants-balloon-plot.pdf"), 
+    width = 6, 
+    height = 6)
+balloon_plot
+dev.off()
+```
+Mosaic plots for form-related varibales and target types.
+```{r, warning=FALSE}
+# Change order of factor levels for 'target' column and recode the value 'individual'
+levels(noSpeechAnnotationsCleaned$target) <- list(card = "card",
+                                                  interior = "interior", 
+                                                  individual  = "individ")
+
+# Function definition: geom_mosaicsettings
+# This function customizes the appearance of the mosaic plots.
+# It adds labels, sets fill colors, applies minimal theme, and adjusts various theme elements.
+geom_mosaicsettings <- function() {
+    list(
+        # Add labels to the plot only if the weight is greater than 4
+        geom_label(data = layer_data(last_plot(), 1) %>% 
+                   filter(.wt > 4),
+                   aes(x = (xmin + xmax) / 2,
+                       y = (ymin + ymax) / 2,
+                       label = .wt, alpha=0.8)),
+        scale_fill_manual(values=customColors),
+        theme_minimal(), 
+        theme(text = element_text(size=14),
+              plot.title = element_text(hjust = 0.5, size = 12),
+              axis.text = element_text(size=13),
+              axis.text.y = element_text(angle = 90, hjust=0.5),
+              legend.position = "none"),
+        labs(x = '', y = '')
+    )
+}
+
+# Create mosaic plot for hand shapes
+mosaic.hs <- ggplot(data = noSpeechAnnotationsCleaned) +
+  geom_mosaic(aes(x = product(shape, target), fill=shape), color="grey20", size=0.3) +
+  labs(title = "Shapes") +
+  geom_mosaicsettings()
+
+# Create mosaic plot for trajectories of movement
+mosaic.tr <- ggplot(data = noSpeechAnnotationsCleaned) +
+  geom_mosaic(aes(x = product(traj, target), fill=traj), color="grey20", size=0.3) +
+  labs(title = "Trajectories") +
+  geom_mosaicsettings()
+
+# Create mosaic plot for hand orientations
+mosaic.or <- ggplot(data = noSpeechAnnotationsCleaned) +
+  geom_mosaic(aes(x = product(orient, target), fill=orient), color="grey20", size=0.3) +
+  labs(title = "Orientations") +
+  geom_mosaicsettings()
+
+# Create mosaic plot for effort
+mosaic.ef <- ggplot(data = noSpeechAnnotationsCleaned) +
+  geom_mosaic(aes(x = product(effort, target), fill=effort), color="grey20", size=0.3)+
+  labs(title = "Effort") +
+  geom_mosaicsettings()
+
+# Arrange the above four plots in a 2x2 grid and add a caption at the bottom
+complete_mosaic_plot <- (mosaic.hs | mosaic.tr) / (mosaic.or | mosaic.ef) + 
+  plot_annotation(caption = 'Targets', 
+                  theme = theme(plot.caption = element_text(size = 12, 
+                                                            hjust = 0.5)))
+complete_mosaic_plot
+```
+## Save plot
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# As PNG
+png(here("figures", "fppt-mosaic-forms-per-target.png"), 
+    width = 20, 
+    height = 20, 
+    units = "cm", 
+    res = 500)
+complete_mosaic_plot
+dev.off()
+
+# As PDF
+pdf(here("figures", "fppt-mosaic-forms-per-target.pdf"), 
+    width = 10, 
+    height = 10)
+complete_mosaic_plot
+dev.off()
+```
+## Pearson's Chi-squared test for targets and each poinitng form variable
+```{r, warning=F, message=F}
+# Get expected frequencies for target and each of the form-related variables for chi-squared tests
+noSpeechAnnotationsExpectedFreq <- lapply(noSpeechAnnotationsCleaned[, 2:5], function(x) {
+  ch <- chisq.test(noSpeechAnnotationsCleaned$target, x)
+  ch$expected
+})
+
+noSpeechAnnotationsExpectedFreq
+
+# Perform a series of chi-squared tests on target and each of the form-related variables
+noSpeechAnnotationsChi <- t(cbind(apply(noSpeechAnnotationsCleaned[, 2:5], 2, function(x) {
+  # Perform chi-squared test
+  ch_test <- chisq.test(noSpeechAnnotationsCleaned$target, x)
+
+  # Calculate Cramér's V
+  n <- sum(ch_test$observed)  # total sample size
+  k <- min(dim(ch_test$observed))  # number of rows or columns, whichever is smaller
+  cramers_v <- sqrt(ch_test$statistic / (n * (k - 1)))
+
+  # Combine chi-squared statistic, degrees of freedom, p-value, and Cramér's V
+  c(ch_test$statistic, ch_test$parameter, p_value = ch_test$p.value, cramers_v=cramers_v)
+})))
+
+# Print the results
+print(noSpeechAnnotationsChi)
+```
+## Conditional inference trees for target types
+```{r, warning=FALSE}
+# Set a random seed for reproducibility
+set.seed(60)
+
+# Fit a Conditional Inference Tree (ctree) for target types
+gtree.target <- partykit::ctree(target ~ shape + orient + traj + effort,
+                      data = noSpeechAnnotationsCleaned)
+
+# Plot the conditional inference tree
+plot(gtree.target)
+
+# Fit another ctree without 'effort' for cleaner visualization
+gtree.target_noeffort <- partykit::ctree(target ~ shape + orient + traj,
+                       data = noSpeechAnnotationsCleaned)
+
+# Create a ggparty plot for the conditional inference tree
+ggtree.target.plot <- ggparty(gtree.target_noeffort, terminal_space = 0.6,
+                              add_vars = list(p.value = "$node$info$p.value")) +
+  geom_edge() +
+  geom_edge_label(col = "grey24", size = 4) +
+  geom_node_plot(gglist = list(geom_bar(aes(x = "", fill = target), 
+                                      width = 0.6, alpha = 0.8, 
+                                      colour = "grey20", size = 0.5, 
+                                      position = position_fill()),
+                               scale_fill_manual(values = customColors),
+                               scale_y_continuous(labels = scales::percent_format(accuracy = 1),
+                                                  breaks = NULL),
+                               labs(fill = "Targets"),
+                               xlab(""), ylab("Pointing gestures"),
+                               theme_minimal(),
+                               theme(text = element_text(size = 12)),
+                               geom_label(aes(x = "", group = target, 
+                                              label = ifelse(..count.. > 3, ..count.., "")),
+                                          stat = "count", 
+                                          position = position_fill(), 
+                                          vjust = 0.9, alpha = 0.8,
+                                          size = 3)),
+                 shared_axis_labels = TRUE) + 
+  geom_node_label(aes(),
+                  line_list = list(aes(label = paste("Node", id)),
+                                   aes(label = splitvar),
+                                   aes(label = paste(scales::pvalue(p.value, 
+                                                         accuracy = 0.001,
+                                                         decimal.mark = ".",
+                                                         add_p = TRUE)))),
+                  line_gpar = list(list(size = 8, col = "black"),
+                                   list(size = 10, fontface = "bold"),
+                                   list(size = 8)),
+                  ids = "inner") 
+
+# Print the ggparty plot
+ggtree.target.plot
+```
+## Save plot
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# As PNG
+ggsave(here("figures", "ctree-target-form.png"), 
+       plot = ggtree.target.plot, 
+       width = 10, 
+       height = 8, 
+       dpi = 300)
+
+# As PDF 
+ggsave(here("figures", "ctree-target-form.pdf"), 
+       plot = ggtree.target.plot, 
+       width = 10, 
+       height = 8)
+```
+## How well does the tree represent the data?
+```{r}
+# Create a confusion matrix for the tree's predictions
+tree_predictions <- predict(gtree.target, type = "response")
+
+# Generate a confusion matrix to evaluate model performance
+confusion_matrix <- confusionMatrix(tree_predictions, 
+                                    noSpeechAnnotationsCleaned$target)
+
+# Print the confusion matrix to assess model representation of the data
+confusion_matrix
+```
+The accuracy is 0.6643 means that the correct predictions are made for 66% of observations.
+
+## Tree with language as predictor
+```{r, warning=FALSE}
+set.seed(60)
+gtree.target.lang <- partykit::ctree(target ~ shape + orient + traj + lang,
+                          data = noSpeechAnnotationsCleaned)
+
+ggtree.target.lang.plot <- ggparty(gtree.target.lang, terminal_space = 0.4,
+        add_vars = list(p.value = "$node$info$p.value")) +
+  geom_edge() +
+  geom_edge_label(col="grey24", size=4) +
+  geom_node_plot(gglist = list(geom_bar(aes(x = "", fill = target), 
+                                        width = 0.8, alpha = 0.8, 
+                                        colour="grey20", size = 0.3, 
+                                        position = position_fill()),
+                               scale_fill_manual(values = customColors),
+                               scale_y_continuous(labels = scales::percent_format(accuracy = 1),
+                                                  breaks=NULL),
+                               labs(fill = "Targets"),
+                               xlab(""), ylab("Pointing gestures"),
+                               theme_minimal(),
+                               theme(text = element_text(size=12))),
+                 shared_axis_labels = T)  +
+  geom_node_label(aes(),
+                  line_list = list(aes(label = paste("Node", id)),
+                                   aes(label = splitvar),
+                                   aes(label = paste(scales::pvalue(p.value, 
+                                                                    accuracy = 0.001,
+                                                                    decimal.mark = ".",
+                                                                    add_p = T)))),
+                  line_gpar = list(list(size = 8, col = "black"),
+                                   list(size = 10, fontface = "bold"),
+                                   list(size = 8)),
+                  ids = "inner") +
+  # add labels for terminal nodes
+  geom_node_label(aes(label = paste0("N = ", nodesize)),
+                  ids = "terminal",
+                  size = 3,
+                  line_gpar = list(list(size = 8, col = "black"),
+                                   list(size = 10, fontface = "bold"))) +
+  labs(title = "") +
+  geom_rect(aes(xmin=0.01, xmax=0.365, ymin=0.040, ymax=0.418), 
+            color = "#EFB758", fill=NA) +
+  geom_rect(aes(xmin=0.385, xmax=0.615, ymin=0.040, ymax=0.418), 
+            color = "#C34129", fill=NA) +
+  geom_rect(aes(xmin=0.635, xmax=0.740, ymin=0.040, ymax=0.418),
+            color = "grey", fill=NA) +
+  geom_rect(aes(xmin=0.760, xmax=0.990, ymin=0.040, ymax=0.418),
+            color = "#183A5A", fill=NA)
+
+# Print plot
+ggtree.target.lang.plot
+```
+## Save plot
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# As PNG
+ggsave(here("figures", "ctree-target-form-lang.png"), 
+       plot = ggtree.target.lang.plot, 
+       width = 10, 
+       height = 8, 
+       dpi = 300)
+
+# As PDF 
+ggsave(here("figures", "ctree-target-form-lang.pdf"), 
+       plot = ggtree.target.lang.plot, 
+       width = 10, 
+       height = 8)
+```
+
+## How well does the tree represent the data?
+```{r}
+# Create a confusion matrix for the tree's predictions
+tree_predictions_wlang <- predict(gtree.target.lang, 
+                                  type = "response")
+
+# Generate a confusion matrix to evaluate model performance
+confusion_matrix_wlang <- confusionMatrix(tree_predictions_wlang, 
+                                          noSpeechAnnotationsCleaned$target)
+
+# Print
+confusion_matrix_wlang
+```
+# Random forest model and conditional variable importance scores
+```{r, warning=F, message=F}
+set.seed(30)
+# Fit a Conditional Random Forest model (cforest) for target types
+rf.target <- party::cforest(target ~ shape + orient + traj + effort,
+                          data = noSpeechAnnotationsCleaned,
+                          control=party::cforest_unbiased(mtry=2,ntree=1000))
+
+# Compute the conditional variable importance scores
+varimp.target <- round(party::varimp(rf.target, conditional = TRUE), 3)
+
+# Create a chart with conditional importance scores
+dotchart(sort(varimp.target), main = "Conditional importance of variables")
+
+# Plot a red line to separate the important scores from the unimportant scores
+abline(v=abs(min(varimp.target)), lty=2, lwd=2, col="red")
+
+# Get accuracy
+caret::confusionMatrix(data = predict(rf.target), 
+                       reference = noSpeechAnnotationsCleaned$target, 
+                       mode = "prec_recall")
+```
+## Plot Random Forest model results as conditional importance plot
+```{r, warning=F, message=F}
+varimp.df <- as.data.frame(varimp.target)
+
+# Row names to column
+varimp.df$names <- rownames(varimp.df)
+
+cond.imp.plot <- ggplot(varimp.df, 
+                        aes(x=reorder(names, varimp.target), 
+                                       y=varimp.target)) + 
+  geom_point(color= "#183A5A", size=4, alpha=0.9) +
+  geom_hline(yintercept = 0.005, 
+             linetype="dashed", 
+             color = "grey40", 
+             size = 0.5) +
+  geom_segment(aes(x=names, 
+                   xend=names, 
+                   y=0, 
+                   yend=varimp.target), 
+               color= "#183A5A", size= 1, alpha=0.8) +
+  labs(x="", y="") +
+  coord_flip() +
+  theme_minimal() +
+  geom_vline(xintercept=0.10, 
+             linetype="dashed", 
+             color = "grey40", 
+             size = 0.5) +
+  theme(aspect.ratio = 2/3,
+        text = element_text(size=12),
+        axis.text = element_text(size=12),
+        axis.title.x = element_text(vjust=-1.5),
+        axis.title.y = element_text(vjust=2)) +
+  scale_x_discrete(labels=c("traj" = "Trajectory", 
+                            "shape" = "Hand shape",
+                            "orient" = "Orientation",
+                            "effort" = "Effort"))
+cond.imp.plot
+```
+## Save plot
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# As PNG
+ggsave(here("figures", "cond-imporance-plot-target-form.png"), 
+       plot = cond.imp.plot, 
+       width = 10, 
+       height = 8, 
+       dpi = 300)
+
+# As PDF 
+ggsave(here("figures", "cond-imporance-plot-target-form.pdf"), 
+       plot = cond.imp.plot, 
+       width = 10, 
+       height = 8)
+```
+
+## Partial dependecne plots
+```{r, warning=F, message=F}
+# Define a list of variables and their names for partial dependence plots
+variables <- c("traj", "shape", "orient", "effort")
+names <- c("Trajectory", "Shape", "Orientation", "Effort")
+names_map <- setNames(names, variables)
+
+# Initialize an empty list to store ggplot objects
+pdp_plots <- list()
+
+# Loop through each variable to create partial dependence plots 
+# and convert to data frames
+for (var in variables) {
+  # Calculate partial dependence
+  pdp <- partial(rf.target, var, prob = TRUE)
+  
+  # Convert to data frame
+  pdp_df <- as.data.frame(pdp)
+
+  # Create a ggplot for each variable
+  pdp_plots[[var]] <- ggplot(pdp_df, aes_string(x = var, y = "yhat")) +
+    geom_point(color = "#183A5A", size = 4, alpha = 0.9) +  
+    geom_segment(aes_string(x = var, xend = var, y = 0, yend = "yhat"), 
+                 color = "#183A5A", size = 1, alpha = 0.8) + 
+    labs(x = names_map[var], y = "") +  
+    theme_minimal() +
+    theme(aspect.ratio = 2/3,
+          text = element_text(size = 12),
+          axis.text = element_text(size = 12),
+          axis.title.x = element_text(vjust = -1.5),
+          axis.title.y = element_text(vjust = 2))
+}
+
+# Combine and arrange the plots using patchwork
+complete_pdp_plot <- wrap_plots(pdp_plots, ncol = 2) + 
+  plot_annotation(theme = theme(plot.caption = element_text(size = 12, 
+                                                            hjust = 0.5)))
+
+# Print the combined plot
+complete_pdp_plot
+```
+## Save plot
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# As PNG
+ggsave(here("figures", "part-dep-plots-target-forms.png"), 
+       plot = complete_pdp_plot, 
+       width = 20, 
+       height = 20, 
+       units = "cm")
+
+# Save as PDF
+ggsave(here("figures", "part-dep-plots-target-forms.pdf"), 
+       plot = complete_pdp_plot, 
+       width = 20, 
+       height = 20)
+```
+# Predict and visualize target type probabilities using the Random Forest model
+```{r, warning=F, message=F}
+# Generate probabilities using the random forest model
+probabilities <- predict(rf.target, 
+                         newdata = noSpeechAnnotationsCleaned, 
+                         type = "prob")
+
+# Combine the probabilities into a data frame
+prob_df <- do.call(rbind, probabilities)
+
+# Reshape the data frame for visualization
+long_prob_df <- as.data.frame(prob_df) %>%
+  mutate(actual_class = noSpeechAnnotationsCleaned$target) %>%
+  pivot_longer(cols = starts_with("target"), 
+               names_to = "predicted_class", 
+               values_to = "probability") %>%
+  mutate(predicted_class = str_replace(predicted_class, "target.", "")) %>%
+  mutate(predicted_class=as.factor(predicted_class)) %>%
+  mutate(
+    actual_class = fct_recode(actual_class, "individual" = "individ"),
+    predicted_class = fct_recode(predicted_class, "individual" = "individ")
+  ) %>%
+  mutate(
+    actual_class = fct_relevel(actual_class, "card", "interior", "individ"),
+    predicted_class = fct_relevel(predicted_class,"card", "interior", "individ")
+  )
+
+# Create a boxplot to visualize predicted probabilities and the actual targets
+pred.prob.plot <- ggplot(long_prob_df, aes(x = actual_class, 
+                                           y = probability, 
+                                           fill = predicted_class)) +
+  geom_boxplot(alpha=0.8, color="grey20", size=0.3) +
+  labs(x = "Actual Target",
+       y = "Predicted Probability",
+       fill = "Predicted Targets") +
+  theme_minimal() +
+  scale_fill_manual(values = customColors) +
+  theme(legend.position = "bottom",
+        text = element_text(size = 12),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(vjust = -1.5),
+        axis.title.y = element_text(vjust = 2),
+        legend.text = element_text(size = 12))
+
+# Print the probability plot
+pred.prob.plot
+```
+
+## Save plot
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# As PNG
+ggsave(here("figures", "targets-pred-prob-plot.png"), 
+       plot = pred.prob.plot, 
+       width = 20, 
+       height = 15, 
+       units = "cm")
+
+# Save as PDF
+ggsave(here("figures", "targets-pred-prob-plot.pdf"), 
+       plot = pred.prob.plot, 
+       width = 10, 
+       height = 8)
+```
+## Session info
+```{r, warning=F}
+sessionInfo()
+```

@@ -1,0 +1,421 @@
+---
+title: "03-Pointing-forms-variation"
+author: "Olena Tykhostup"
+date: "2023-01-20"
+output: html_document
+---
+This is the code used for data analysis reported in Chapter 5 of the dissertation "Multimodal annotation and analysis of a Narrative problem solving task in English, Idi, and Russian". It analyzes pointing gesture forms and their spoken affiliates. Specifically, the script contains multiple Multiple Correspondence Analyses (MCA) in English and Russian used to uncover the underlying relationships and patterns among the variables.The analysis encompasses variables capturing pointing gesture forms — such as hand shape, palm orientation, contact with the target, and trajectory of movement — alongside annotations for nouns, verbs, and demonstratives. By extracting eigenvalues from the MCA, the script quantifies how much variance each dimension explains, utilizing a scree plot for visualization to assist in identifying the dimensions of significance. 
+
+## Load packages
+```{r, warning=F, message=F}
+library(here) 
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(FactoMineR)
+library(factoextra)
+library(patchwork)
+library(ggforce)
+```
+## Load and clean df for English nouns
+```{r}
+eng.nouns.pr <- read.delim2(here("data", "eng.nouns.w.points-processed.csv"), sep = ";") %>%
+  separate(gest, c("pgb", "shape", "cont", "traj", "orient")) %>%
+  mutate(semcl = case_when(str_detect(conc,"abs")   ~ "abstract",
+                           str_detect(anim, "inanim") & str_detect(conc, "conc") ~ "material",
+                           str_detect(anim, "anim") & str_detect(conc, "conc") ~ "animate",
+                        TRUE ~ "na")) %>%
+  mutate(emb=recode(emb,
+                    `def` = "def.art",
+                    `indef`="indef.art",
+                    `dem`="demonstr",
+                    `pp`="pers.pron",
+                    `other`="no.modif",
+                    )) %>%
+  mutate(shape=recode(shape,
+                    `other` = "other.shape")) %>%
+  select(2:5,9,12:13) %>%
+  mutate_if(is.character,as.factor)
+
+summary(eng.nouns.pr)
+```
+## Run analysis
+```{r}
+eng.n.mca <- MCA(eng.nouns.pr, graph = FALSE)
+```
+## Get eigenvalues
+```{r}
+eng.n.mca.val <- get_eigenvalue(eng.n.mca)
+head(eng.n.mca.val)
+```
+## Scree Plot
+```{r, message=FALSE}
+fviz_screeplot(eng.n.mca, addlabels = TRUE, ylim = c(0, 45))
+```
+## Quality of Representation
+```{r}
+eng.n.categories_cos2 <- eng.n.mca$var$cos2
+
+# The 'cos2' for the individuals
+individuals_cos2 <- eng.n.mca$ind$cos2
+knitr::kable(eng.n.categories_cos2[, 1:2], caption = "Squared cosines for the first two dimensions of categories")
+```
+## Biplot with categories of different variables 
+```{r}
+fviz_mca_biplot(eng.n.mca, 
+               repel = TRUE, # Avoid text overlapping (slow if many point)
+               ggtheme = theme_minimal())
+
+```
+# Final plot for English nouns
+```{r}
+mca.plot.eng <- fviz_mca_var(eng.n.mca,
+                               col.var = "contrib",
+                               gradient.cols = c("#183A5A", "#EFB758", "#C34129", "#8B0000"), 
+                               repel = TRUE, pointsize=0.5) # Avoid text overlapping
+
+mca.eng.plot.noun.print.fin <- mca.plot.eng + 
+  geom_point(aes(size = cos2, color=contrib)) +
+  guides(size = FALSE) +
+  theme(text=element_text(size=12),
+        axis.title = element_text(),
+        legend.position="bottom") +
+  labs(y = "Dimention 2 (12.2%)", x = "Dimention 1 (13.7%)", color = "Contribution", title = "English") +
+  ggforce::geom_ellipse(aes(x0 = 1.25, y0 = 1.1, a = 1.1, b = 0.9, angle = pi / 2.5), 
+               color="grey") +
+  ggforce::geom_ellipse(aes(x0 = 0.75, y0 = -0.7, a = 0.2, b = 0.5, angle = pi / 5), 
+               color="grey") +
+  ggforce::geom_ellipse(aes(x0 = -0.8, y0 = -1, a = 0.5, b = 0.7, angle = pi / 1), 
+               color="grey")
+
+    
+mca.eng.plot.noun.print.fin
+```
+## Load and clean Russian nouns df
+```{r}
+rus.nouns.pr <- read.delim2(here("data", "rus.nouns.w.points-processed.csv"), encoding = "UTF-8", sep = ";") %>%
+  separate(Gest, c("pgb", "shape", "cont", "traj", "orient")) %>%
+  mutate_if(is.character, str_to_lower) %>%
+  mutate(modifier=recode(modifier,
+                    `dem`="demonstr",
+                    `pp`="poss.pron",
+                    `no`="no.modif",
+                    `indef`="no.modif",
+                    `other`="other.modif",
+                    )) %>%
+  mutate(shape=recode(shape,
+                    `other`="other.shape")) %>%
+  select(2:5,11:13) %>%
+  mutate_if(is.character,as.factor)
+
+summary(rus.nouns.pr)
+```
+## Run analysis
+```{r}
+rus.n.mca <- MCA(rus.nouns.pr, graph = FALSE)
+```
+## Get eigenvalues
+```{r}
+rus.n.mca.val <- get_eigenvalue(rus.n.mca)
+head(rus.n.mca.val)
+```
+## Scree Plot
+```{r, message=FALSE}
+fviz_screeplot(rus.n.mca, addlabels = TRUE, ylim = c(0, 45))
+```
+## Quality of Representation
+```{r}
+rus.n.categories_cos2 <- rus.n.mca$var$cos2
+
+# The 'cos2' for the individuals
+individuals_cos2 <- rus.n.mca$ind$cos2
+knitr::kable(rus.n.categories_cos2[, 1:2], caption = "Squared cosines for the first two dimensions of categories")
+```
+## Biplot with categories of different variables 
+```{r}
+fviz_mca_biplot(rus.n.mca, 
+               repel = TRUE, # Avoid text overlapping (slow if many point)
+               ggtheme = theme_minimal())
+
+```
+## Final plot for Russian nouns
+```{r}
+mca.plot.rus <- fviz_mca_var(rus.n.mca,
+                               col.var = "contrib",
+                               gradient.cols = c("#183A5A", "#EFB758", "#C34129", "#8B0000"), 
+                               repel = TRUE, pointsize=0.5) # Avoid text overlapping
+
+mca.noun.plot.print.fin.rus <- mca.plot.rus + 
+  geom_point(aes(size = cos2, color=contrib)) +
+  guides(size = FALSE) +
+  theme(text=element_text(size=12),
+        axis.title = element_text(),
+        legend.position="bottom") +
+  labs(y = "Dimention 2 (12.8%)", x = "Dimention 1 (14.9%)", color = "Contribution", title = "Russian") +
+  ggforce::geom_ellipse(aes(x0 = 1.2, y0 = -0.5, a = 0.9, b = 0.3, angle = pi / 2.5), 
+               color="grey") +
+  ggforce::geom_ellipse(aes(x0 = 0.4, y0 = 1.3, a = 0.2, b = 1, angle = pi / 1), 
+               color="grey") +
+  ggforce::geom_ellipse(aes(x0 = -0.1, y0 = -0.4, a = 0.5, b = 0.2, angle = pi / 2.5), 
+               color="grey")
+
+mca.noun.plot.print.fin.rus
+```
+
+## Save English and Russian noun plots next to each other
+```{r, warning=F, message=F}
+png(here("figures", "fppt-eng-mca-nouns-plot.png"), width = 25, height = 15, units = "cm", res = 1000)
+mca.eng.plot.noun.print.fin + mca.noun.plot.print.fin.rus
+dev.off()
+
+pdf(here("figures", "fppt-eng-mca-nouns-plot.pdf"), width = 8, height = 6)
+mca.eng.plot.noun.print.fin + mca.noun.plot.print.fin.rus
+dev.off()
+```
+## Load in English verbs df
+```{r}
+eng.verbs.pr <- read.delim2(here("data", "eng.verbs.w.points-processed.csv"), sep = ";") %>%
+   mutate_at(8:11, str_to_lower) %>%
+  separate(1, c("pgb", "shape", "cont", "traj", "orient")) %>%
+  mutate(shape=recode(shape,
+                    `other` = "other.shape")) %>%
+  mutate(Event=recode(Event,
+                    `card` = "card.description",
+                    `meta` = "task.management")) %>%
+  select(2:5,12:15) %>%
+  mutate_if(is.character,as.factor)
+
+summary(eng.verbs.pr)
+```
+## Run analysis
+```{r}
+eng.v.mca <- MCA(eng.verbs.pr, graph = FALSE)
+```
+## Get eigenvalues
+```{r}
+eng.v.mca.val <- get_eigenvalue(eng.v.mca)
+head(eng.v.mca.val)
+```
+## Scree Plot
+```{r, message=FALSE}
+fviz_screeplot(eng.v.mca, addlabels = TRUE, ylim = c(0, 45))
+```
+## Biplot with categories of different variables 
+```{r}
+fviz_mca_biplot(eng.v.mca, 
+               repel = TRUE, # Avoid text overlapping (slow if many point)
+               ggtheme = theme_minimal())
+
+```
+## Final plot
+```{r}
+mca.plot.eng.v <- fviz_mca_var(eng.v.mca,
+                               axes = c(1, 2),
+                               col.var = "contrib",
+                               gradient.cols = c("#183A5A", "#EFB758", "#C34129", "#8B0000"), 
+                               repel = TRUE, pointsize=0.5) # Avoid text overlapping
+
+mca.eng.plot.print.fin.v <- mca.plot.eng.v + 
+  geom_point(aes(size = cos2, color=contrib)) +
+  guides(size = FALSE) +
+  theme(text=element_text(size=12),
+        axis.title = element_text(),
+        legend.position="bottom") +
+  labs(y = "Dimention 2 (15.4%)", x = "Dimention 1 (21.9%)", color = "Contribution", title = "English") +
+  ggforce::geom_ellipse(aes(x0 = 1, y0 = -0.1, a = 0.8, b = 0.9, angle = pi / 2.5), 
+               color="grey")  +
+  ggforce::geom_ellipse(aes(x0 = -0.85, y0 = -0.1, a = 1.4, b = 0.45, angle = pi / 2.5), 
+               color="grey")
+    
+mca.eng.plot.print.fin.v
+```
+## Load in Russian Verbs
+```{r}
+rus.verbs.pr <- read.delim2(here("data", "rus.verbs.w.points-processed.csv"), encoding = "UTF-8", sep = ";") %>%
+  separate(1, c("pgb", "shape", "cont", "traj", "orient")) %>%
+  mutate(num = case_when(str_detect(feats,"Number=Sing") ~ "sg",
+                         str_detect(feats, "Number=Plur") ~ "pl",
+         TRUE ~ "sg")) %>%
+  mutate_if(is.character, str_to_lower) %>%
+  select(2:5,11:14) %>%
+  mutate(shape=recode(shape,
+                    `other`="other.shape")) %>%
+  mutate(use=recode(use,
+                    `card` = "card.description",
+                    `task` = "task.management")) %>%
+  mutate_if(is.character,as.factor) 
+  
+summary(rus.verbs.pr)
+
+```
+## Analyse verbs
+```{r}
+rus.v.mca <- MCA(rus.verbs.pr, graph = FALSE)
+```
+## Get eigenvalues
+```{r}
+rus.v.mca.val <- get_eigenvalue(rus.v.mca)
+head(rus.v.mca.val)
+```
+## Scree Plot
+```{r, message=FALSE}
+fviz_screeplot(rus.v.mca, addlabels = TRUE, ylim = c(0, 45))
+```
+
+## Biplot with categories of different variables 
+```{r}
+fviz_mca_biplot(rus.v.mca, 
+               repel = TRUE, # Avoid text overlapping (slow if many point)
+               ggtheme = theme_minimal())
+
+```
+## Russian verbs plot
+```{r}
+mca.plot.rus.v <- fviz_mca_var(rus.v.mca,
+                               col.var = "contrib",
+                               gradient.cols = c("#183A5A", "#EFB758", "#C34129", "#8B0000"), 
+                               repel = TRUE, pointsize=0.5) # Avoid text overlapping
+
+mca.verb.plot.print.fin.rus.v <- mca.plot.rus.v + 
+  geom_point(aes(size = cos2, color=contrib)) +
+  guides(size = FALSE) +
+  theme(text=element_text(size=12),
+        axis.title = element_text(),
+        legend.position="bottom") +
+  labs(y = "Dimention 2 (12.7%)", x = "Dimention 1 (18.1%)", color = "Contribution", title = "Russian") +
+  ggforce::geom_ellipse(aes(x0 = 3, y0 = 1, a = 2, b = 0.9, angle = pi / 1), 
+               color="grey")
+
+mca.verb.plot.print.fin.rus.v
+```
+## Save plots
+```{r, warning=F, message=F}
+png(here("figures", "fppt-rus-eng-mca-verbs-plot.png"), width = 25, height = 15, units = "cm", res = 1000)
+mca.eng.plot.print.fin.v + mca.verb.plot.print.fin.rus.v
+dev.off()
+
+pdf(here("figures", "ffppt-rus-eng-mca-verbs-plot.pdf"), width = 8, height = 6)
+mca.eng.plot.print.fin.v + mca.verb.plot.print.fin.rus.v
+dev.off()
+```
+## Demonstratives English load in
+```{r}
+eng.dem.pr <- read.delim2(here("data", "eng.dem.w.points-processed.csv"), sep = ";") %>%
+  separate(1, c("pgb", "shape", "cont", "traj", "orient")) %>%
+  select(2:5,12) %>%
+  mutate_if(is.character,as.factor)
+
+summary(eng.dem.pr$class)
+```
+## Run analysis
+```{r}
+eng.dem.mca <- MCA(eng.dem.pr, graph = FALSE)
+eng.dem.mca.val <- get_eigenvalue(eng.dem.mca)
+head(eng.dem.mca.val)
+```
+## Scree Plot
+```{r, message=FALSE}
+fviz_screeplot(eng.dem.mca, addlabels = TRUE, ylim = c(0, 45))
+```
+## Biplot with categories of different variables 
+```{r}
+fviz_mca_biplot(eng.dem.mca, 
+               repel = TRUE, # Avoid text overlapping (slow if many point)
+               ggtheme = theme_minimal())
+
+```
+## Final plot
+```{r}
+mca.plot.eng.dem <- fviz_mca_var(eng.dem.mca,
+                               col.var = "contrib",
+                               gradient.cols = c("#183A5A", "#EFB758", "#C34129", "#8B0000"), 
+                               repel = TRUE, pointsize=0.5) # Avoid text overlapping
+mca.eng.plot.print.fin.dem <- mca.plot.eng.dem + 
+  geom_point(aes(size = cos2, color=contrib)) +
+  guides(size = FALSE) +
+  theme(text=element_text(size=12),
+        axis.title = element_text(),
+        legend.position="bottom") +
+  labs(y = "Dimention 2 (13.3%)", x = "Dimention 1 (13.7%)", color = "Contribution", title = "English")
+    
+mca.eng.plot.print.fin.dem
+```
+## Load demonstratives and person pronouns Russian
+```{r}
+rus.dem.pr <- read.delim2(here("data", "rus.dem.w.points-processed.csv"), encoding = "UTF-8", sep = ";") %>%
+  separate(1, c("pgb", "shape", "cont", "traj", "orient")) %>%
+  mutate_if(is.character, str_to_lower) %>%
+  mutate(shape=recode(shape,
+                    `other`="other.shape",
+                    `iindex`="index")) %>%
+  mutate(orient=recode(orient,
+                    `dow`="down")) %>%
+  mutate(class=recode(class,
+                    `loc_adv_pr`="loc_adv_prox",
+                    `pp_1st_pl`="pp_1st_2nd",
+                    `pp_1st_sg`="pp_1st_2nd",
+                    `pp_2nd`="pp_1st_2nd",
+                    `all`="other",
+                    `evid_adv`="other",
+                    `temporal`="other")) %>%
+  select(2:5,11) %>%
+  filter(!class %in% c("other", "pp_1st_2nd")) %>%
+  mutate_if(is.character,as.factor)
+
+summary(rus.dem.pr$class)
+
+```
+# Analyse dem and pp
+```{r}
+rus.dem.mca <- MCA(rus.dem.pr, graph = FALSE)
+```
+## Get eigenvalues
+```{r}
+rus.dem.mca.val <- get_eigenvalue(rus.dem.mca)
+head(rus.dem.mca.val)
+```
+## Scree Plot
+```{r, message=FALSE}
+fviz_screeplot(rus.dem.mca, addlabels = TRUE, ylim = c(0, 45))
+```
+## Biplot with categories of different variables 
+```{r}
+fviz_mca_biplot(rus.dem.mca, 
+               repel = TRUE, # Avoid text overlapping (slow if many point)
+               ggtheme = theme_minimal())
+
+```
+
+# Final plot Russian
+```{r}
+
+mca.plot.rus.dem <- fviz_mca_var(rus.dem.mca,
+                               col.var = "contrib",
+                               gradient.cols = c("#183A5A", "#EFB758", "#C34129", "#8B0000"), 
+                               repel = TRUE, pointsize=0.5) # Avoid text overlapping
+
+mca.noun.plot.print.fin.rus.dem <- mca.plot.rus.dem + 
+  geom_point(aes(size = cos2, color=contrib)) +
+  guides(size = FALSE) +
+  theme(text=element_text(size=12),
+        axis.title = element_text(),
+        legend.position="bottom") +
+  labs(y = "Dimention 2 (12.8%)", x = "Dimention 1 (15.9%)", color = "Contribution", title = "Russian")
+
+mca.noun.plot.print.fin.rus.dem
+```
+## Save plot Russian and English
+```{r, warning=F, message=F}
+png(here("figures", "fppt-rus-eng-mca-dems-plot.png"), width = 25, height = 15, units = "cm", res = 1000)
+mca.eng.plot.print.fin.dem + mca.noun.plot.print.fin.rus.dem
+dev.off()
+
+pdf(here("figures", "fppt-rus-eng-mca-dems-plot.pdf"), width = 8, height = 6)
+mca.eng.plot.print.fin.dem + mca.noun.plot.print.fin.rus.dem
+dev.off()
+
+```
+## Session info
+```{r}
+sessionInfo()
+```
